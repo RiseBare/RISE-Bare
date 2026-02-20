@@ -68,6 +68,7 @@
   "settings.autoUpdate": "Mettre à jour automatiquement les scripts à la connexion",
   "settings.save": "Enregistrer",
   "settings.saved": "Paramètres enregistrés",
+  "settings.donate": "Soutenir le développement de RISE",
 
   "error.passwordRequired": "Le mot de passe est requis",
   "error.connectionFailed": "Échec de la connexion : %s",

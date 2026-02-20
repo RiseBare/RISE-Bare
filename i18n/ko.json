@@ -68,6 +68,7 @@
   "settings.autoUpdate": "연결 시 스크립트 자동 업데이트",
   "settings.save": "저장",
   "settings.saved": "설정이 저장되었습니다",
+  "settings.donate": "RISE 개발 지원하기",
 
   "error.passwordRequired": "비밀번호가 필요합니다",
   "error.connectionFailed": "연결 실패: %s",

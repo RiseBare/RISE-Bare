@@ -22,6 +22,19 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Hyperlink;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
+import javafx.scene.control.PasswordField;
+import javafx.scene.control.RadioButton;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
+import javafx.scene.control.TextArea;
+import javafx.scene.control.TextField;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
@@ -30,7 +43,9 @@ import net.schmizz.sshj.SSHClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.Desktop;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -252,7 +267,22 @@ public class MainController {
         grid.add(langCombo, 1, 0);
         grid.add(autoUpdateCheck, 0, 1, 2, 1);
 
-        dialog.getDialogPane().setContent(grid);
+        // Donation button
+        Hyperlink donateLink = new Hyperlink(msg.get("settings.donate"));
+        donateLink.setStyle("-fx-text-fill: #635bff; -fx-font-size: 14;");
+        donateLink.setOnAction(e -> {
+            try {
+                Desktop.getDesktop().browse(new URI("https://buy.stripe.com/00waEX8WUaso4jB7cL8k801"));
+            } catch (Exception ex) {
+                LOG.warn("Could not open donation link: {}", ex.getMessage());
+            }
+        });
+
+        VBox contentBox = new VBox(10);
+        contentBox.getChildren().addAll(grid, new Separator(), donateLink);
+        contentBox.setPadding(new javafx.geometry.Insets(10, 0, 0, 0));
+
+        dialog.getDialogPane().setContent(contentBox);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         dialog.showAndWait().ifPresent(result -> {

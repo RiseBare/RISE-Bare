@@ -68,6 +68,7 @@
   "settings.autoUpdate": "连接时自动更新脚本",
   "settings.save": "保存",
   "settings.saved": "设置已保存",
+  "settings.donate": "支持 RISE 开发",
 
   "error.passwordRequired": "需要密码",
   "error.connectionFailed": "连接失败：%s",

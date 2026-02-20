@@ -68,6 +68,7 @@
   "settings.autoUpdate": "อัปเดตสคริปต์อัตโนมัติเมื่อเชื่อมต่อ",
   "settings.save": "บันทึก",
   "settings.saved": "บันทึกการตั้งค่าแล้ว",
+  "settings.donate": "สนับสนุนการพัฒนา RISE",
 
   "error.passwordRequired": "ต้องระบุรหัสผ่าน",
   "error.connectionFailed": "การเชื่อมต่อล้มเหลว: %s",

@@ -68,6 +68,7 @@
   "settings.autoUpdate": "接続時にスクリプトを自動更新",
   "settings.save": "保存",
   "settings.saved": "設定が保存されました",
+  "settings.donate": "RISE開発を支援する",
 
   "error.passwordRequired": "パスワードが必要です",
   "error.connectionFailed": "接続失敗：%s",

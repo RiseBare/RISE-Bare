@@ -68,6 +68,7 @@
   "settings.autoUpdate": "Auto-update scripts on connect",
   "settings.save": "Save",
   "settings.saved": "Settings saved",
+  "settings.donate": "Support RISE Development",
 
   "error.passwordRequired": "Password is required",
   "error.connectionFailed": "Connection failed: %s",

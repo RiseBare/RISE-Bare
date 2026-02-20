@@ -68,6 +68,7 @@
   "settings.autoUpdate": "Автоматически обновлять скрипты при подключении",
   "settings.save": "Сохранить",
   "settings.saved": "Настройки сохранены",
+  "settings.donate": "Поддержать разработку RISE",
 
   "error.passwordRequired": "Требуется пароль",
   "error.connectionFailed": "Ошибка подключения: %s",

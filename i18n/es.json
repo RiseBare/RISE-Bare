@@ -68,6 +68,7 @@
   "settings.autoUpdate": "Actualizar scripts automáticamente al conectar",
   "settings.save": "Guardar",
   "settings.saved": "Configuración guardada",
+  "settings.donate": "Apoyar el desarrollo de RISE",
 
   "error.passwordRequired": "Se requiere contraseña",
   "error.connectionFailed": "Error de conexión: %s",

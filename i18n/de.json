@@ -68,6 +68,7 @@
   "settings.autoUpdate": "Skripte beim Verbinden automatisch aktualisieren",
   "settings.save": "Speichern",
   "settings.saved": "Einstellungen gespeichert",
+  "settings.donate": "RISE-Entwicklung unterstützen",
 
   "error.passwordRequired": "Passwort erforderlich",
   "error.connectionFailed": "Verbindung fehlgeschlagen: %s",

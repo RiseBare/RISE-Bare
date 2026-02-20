@@ -34,8 +34,8 @@ RISE is a professional-grade, agent-less server management platform designed for
 
 ### Server (Debian 12/13+)
 - Debian 12 (Bookworm) or Debian 13 (Trixie)
-- Root access for initial setup
-- nftables, jq, openssl
+- SSH access with sudo/root privileges
+- Internet access (to download scripts from GitHub)
 
 ### Client
 - Java 21+
@@ -43,29 +43,34 @@ RISE is a professional-grade, agent-less server management platform designed for
 
 ## Quick Start
 
-### 1. Prepare the Server
-
-```bash
-curl -s https://raw.githubusercontent.com/RiseBare/RISE-Bare/main/scripts/setup-env.sh | bash -s -- --install
-```
-
-### 2. Build the Client
+### 1. Build the Client
 
 ```bash
 mvn clean package
 ```
 
-### 3. Run the Client
+### 2. Run the Client
 
 ```bash
 java -jar target/rise-client-1.0.0.jar
 ```
 
-### 4. Add Your First Server
+### 3. Add Your Server
 
-Launch the client and click "Add Server". Enter your server credentials:
-- The app automatically installs RISE on new servers
-- If RISE is already installed, it adds your device's SSH key
+Click "Add Server" and enter:
+- Server name (e.g., "My VPS")
+- IP address or hostname
+- SSH port (default: 22)
+- Username (root or sudo user)
+- Password
+
+The app will automatically:
+- Install RISE scripts on your server
+- Create a dedicated `rise-admin` account
+- Add your device's SSH key
+- Configure SSH security based on your chosen mode
+
+That's it! Your server is now managed by RISE.
 
 ## Security Features
 

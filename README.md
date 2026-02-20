@@ -73,7 +73,6 @@ java -jar target/rise-client-1.0.0.jar
 ## Support
 
 If you find RISE useful, consider supporting its development:
-
 <script async
   src="https://js.stripe.com/v3/buy-button.js">
 </script>

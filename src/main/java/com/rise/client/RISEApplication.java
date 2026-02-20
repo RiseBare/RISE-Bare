@@ -1,5 +1,7 @@
 package com.rise.client;
 
+import com.rise.client.config.AppSettings;
+import com.rise.client.i18n.Messages;
 import com.rise.client.security.KeyManager;
 import com.rise.client.service.SSHCommandExecutor;
 import com.rise.client.ui.MainController;
@@ -27,7 +29,12 @@ public class RISEApplication extends Application {
     public void start(Stage primaryStage) throws Exception {
         LOG.info("Starting RISE Client v1.0.0");
 
-        // V5.9: Initialize secure key storage FIRST
+        // Load settings and apply language
+        AppSettings settings = AppSettings.getInstance();
+        Messages.getInstance().setLanguage(settings.getLanguage());
+        LOG.info("Language set to: " + settings.getLanguage());
+
+        // Initialize secure key storage FIRST
         try {
             KeyManager.initializeSecureStorage();
         } catch (IOException e) {
@@ -44,7 +51,8 @@ public class RISEApplication extends Application {
             MainController controller = loader.getController();
             controller.setStage(primaryStage);
 
-            primaryStage.setTitle("RISE - Remote Infrastructure Security & Efficiency");
+            Messages msg = Messages.getInstance();
+            primaryStage.setTitle(msg.get("app.title"));
             primaryStage.setScene(new Scene(root, 1024, 768));
             primaryStage.setMinWidth(800);
             primaryStage.setMinHeight(600);

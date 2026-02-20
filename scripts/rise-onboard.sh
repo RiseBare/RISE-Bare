@@ -197,8 +197,8 @@ finalize_onboarding() {
     mkdir -p /home/rise-admin/.ssh
     chmod 700 /home/rise-admin/.ssh
 
-    # Add public key to authorized_keys
-    echo "$pubkey" > /home/rise-admin/.ssh/authorized_keys
+    # Add public key to authorized_keys (APPEND - allow multiple devices)
+    echo "$pubkey" >> /home/rise-admin/.ssh/authorized_keys
     chmod 600 /home/rise-admin/.ssh/authorized_keys
     chown -R rise-admin:rise-admin /home/rise-admin/.ssh
 
@@ -305,8 +305,188 @@ if [ "${1:-}" = "--version" ]; then
     exit 0
 fi
 
+# Feature: --check - Check if RISE is installed
+check_installation() {
+    local rise_installed=false
+    local rise_admin_exists=false
+    local ssh_key_installed=false
+
+    # Check if scripts exist
+    if [ -f /usr/local/bin/rise-firewall.sh ] && \
+       [ -f /usr/local/bin/rise-docker.sh ] && \
+       [ -f /usr/local/bin/rise-update.sh ] && \
+       [ -f /usr/local/bin/rise-health.sh ]; then
+        rise_installed=true
+    fi
+
+    # Check if rise-admin user exists with SSH key
+    if id rise-admin &>/dev/null; then
+        rise_admin_exists=true
+        if [ -f /home/rise-admin/.ssh/authorized_keys ] && \
+           [ -s /home/rise-admin/.ssh/authorized_keys ]; then
+            ssh_key_installed=true
+        fi
+    fi
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg script_version "$SCRIPT_VERSION" \
+        --argjson rise_installed "$rise_installed" \
+        --argjson rise_admin_exists "$rise_admin_exists" \
+        --argjson ssh_key_installed "$ssh_key_installed" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            script_version: $script_version,
+            rise_installed: $rise_installed,
+            rise_admin_exists: $rise_admin_exists,
+            ssh_key_installed: $ssh_key_installed
+        }'
+}
+
+# Feature: --add-device - Add a new SSH key to existing RISE installation
+add_device() {
+    require_root
+    local pubkey="$1"
+
+    # Validate public key
+    if ! validate_pubkey "$pubkey"; then
+        die ERR_INVALID_PUBKEY "Invalid SSH public key format"
+    fi
+
+    # Check if rise-admin exists
+    if ! id rise-admin &>/dev/null; then
+        die ERR_NO_RISE_ADMIN "RISE is not installed on this server. Run onboarding first."
+    fi
+
+    # Create .ssh directory if needed
+    mkdir -p /home/rise-admin/.ssh
+    chmod 700 /home/rise-admin/.ssh
+
+    # Check if key already exists
+    if grep -qF "$pubkey" /home/rise-admin/.ssh/authorized_keys 2>/dev/null; then
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            '{
+                status: "success",
+                api_version: $api_version,
+                message: "SSH key already registered for this device",
+                already_exists: true
+            }'
+        exit 0
+    fi
+
+    # Append key to authorized_keys (ADD not replace!)
+    echo "$pubkey" >> /home/rise-admin/.ssh/authorized_keys
+    chmod 600 /home/rise-admin/.ssh/authorized_keys
+    chown -R rise-admin:rise-admin /home/rise-admin/.ssh
+
+    log_event "Added new SSH key for rise-admin (device added)"
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            message: "New SSH key added successfully",
+            already_exists: false
+        }'
+}
+
+# Feature: --remove-device - Remove an SSH key from authorized_keys
+remove_device() {
+    require_root
+    local pubkey="$1"
+
+    if ! id rise-admin &>/dev/null; then
+        die ERR_NO_RISE_ADMIN "RISE is not installed"
+    fi
+
+    if [ ! -f /home/rise-admin/.ssh/authorized_keys ]; then
+        die ERR_NO_KEYS "No authorized keys found"
+    fi
+
+    # Remove the key
+    local key_count_before=$(wc -l < /home/rise-admin/.ssh/authorized_keys)
+    grep -vF "$pubkey" /home/rise-admin/.ssh/authorized_keys > /tmp/authorized_keys_tmp
+    mv /tmp/authorized_keys_tmp /home/rise-admin/.ssh/authorized_keys
+    chmod 600 /home/rise-admin/.ssh/authorized_keys
+    chown -R rise-admin:rise-admin /home/rise-admin/.ssh
+    local key_count_after=$(wc -l < /home/rise-admin/.ssh/authorized_keys)
+
+    log_event "Removed SSH key from rise-admin"
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --argjson removed $((key_count_before - key_count_after)) \
+        '{
+            status: "success",
+            api_version: $api_version,
+            message: "SSH key removed",
+            keys_remaining: $removed
+        }'
+}
+
+# Feature: --list-devices - List all registered SSH keys
+list_devices() {
+    if ! id rise-admin &>/dev/null; then
+        die ERR_NO_RISE_ADMIN "RISE is not installed"
+    fi
+
+    if [ ! -f /home/rise-admin/.ssh/authorized_keys ]; then
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            '{
+                status: "success",
+                api_version: $api_version,
+                devices: []
+            }'
+        exit 0
+    fi
+
+    # Parse keys and extract info
+    local devices_json="["
+    local first=true
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local key_type=$(echo "$line" | awk '{print $1}')
+        local key_comment=$(echo "$line" | awk '{print $3}' | sed 's/"/\\"/g')
+
+        if [ "$first" = true ]; then
+            first=false
+        else
+            devices_json+=","
+        fi
+
+        devices_json+="{\"type\":\"$key_type\",\"comment\":\"$key_comment\",\"key\":\"${line:0:80}...\"}"
+    done < /home/rise-admin/.ssh/authorized_keys
+    devices_json+="]"
+
+    echo "$devices_json" | jq \
+        --arg api_version "$API_VERSION" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            devices: .
+        }'
+}
+
 # Main entry point
 case "${1:-}" in
+    --check)
+        check_installation
+        ;;
+    --add-device)
+        [ -n "${2:-}" ] || die ERR_INVALID_ARGUMENTS "Usage: $0 --add-device <public_key>"
+        add_device "$2"
+        ;;
+    --remove-device)
+        [ -n "${2:-}" ] || die ERR_INVALID_ARGUMENTS "Usage: $0 --remove-device <public_key>"
+        remove_device "$2"
+        ;;
+    --list-devices)
+        list_devices
+        ;;
     --generate-otp)
         generate_otp "${2:-600}"
         ;;
@@ -324,6 +504,6 @@ case "${1:-}" in
             '{status: "success", api_version: $api_version, script_version: $script_version}'
         ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--generate-otp|--finalize <pubkey>|--cleanup|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--check|--add-device <pubkey>|--remove-device <pubkey>|--list-devices|--generate-otp|--finalize <pubkey>|--cleanup|--version}"
         ;;
 esac

@@ -14,6 +14,7 @@ public class ServerConfig {
     private Integer port = 22;
     private String username = "rise-admin";
     private String knownHostFingerprint;
+    private String securityMode = "MODE_3"; // Default to recommended mode
 
     // Transient - not saved to config
     @JsonIgnore
@@ -45,6 +46,9 @@ public class ServerConfig {
 
     public String getKnownHostFingerprint() { return knownHostFingerprint; }
     public void setKnownHostFingerprint(String knownHostFingerprint) { this.knownHostFingerprint = knownHostFingerprint; }
+
+    public String getSecurityMode() { return securityMode; }
+    public void setSecurityMode(String securityMode) { this.securityMode = securityMode; }
 
     // Transient password (not persisted)
     public String getPassword() { return password; }

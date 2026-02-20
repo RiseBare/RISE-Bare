@@ -154,8 +154,38 @@ update_scripts() {
         '{status: "success", api_version: $api_version, message: "Scripts updated successfully"}'
 }
 
+# Check RISE installation status
+check_status() {
+    local scripts_installed=false
+    local scripts_version=""
+
+    if [ -f /usr/local/bin/rise-firewall.sh ] && \
+       [ -f /usr/local/bin/rise-docker.sh ] && \
+       [ -f /usr/local/bin/rise-update.sh ] && \
+       [ -f /usr/local/bin/rise-health.sh ]; then
+        scripts_installed=true
+        scripts_version=$(/usr/local/bin/rise-firewall.sh --version 2>/dev/null | jq -r '.script_version // "unknown"' || echo "unknown")
+    fi
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg script_version "$SCRIPT_VERSION" \
+        --argjson installed "$scripts_installed" \
+        --arg version "$scripts_version" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            script_version: $script_version,
+            rise_installed: $installed,
+            installed_version: $version
+        }'
+}
+
 # Main entry point
 case "${1:-}" in
+    --check)
+        check_status
+        ;;
     --install)
         install_dependencies
         ;;
@@ -169,6 +199,6 @@ case "${1:-}" in
             '{status: "success", api_version: $api_version, script_version: $script_version}'
         ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--install|--update|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--check|--install|--update|--version}"
         ;;
 esac

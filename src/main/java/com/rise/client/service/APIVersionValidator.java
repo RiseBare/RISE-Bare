@@ -6,9 +6,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Exception for API version validation failures
  */
-public class APIVersionException extends Exception {
-    private static final Logger LOG = LoggerFactory.getLogger(APIVersionException.class);
-
+class APIVersionException extends Exception {
     public APIVersionException(String message) {
         super(message);
     }
@@ -19,6 +17,7 @@ public class APIVersionException extends Exception {
  * V5.9: Enhanced validation with format check and better error messages
  */
 public class APIVersionValidator {
+    private static final Logger LOG = LoggerFactory.getLogger(APIVersionValidator.class);
     private static final String CLIENT_API_VERSION = "1.0";
 
     /**

@@ -4,16 +4,16 @@ import com.rise.client.model.ServerConfig;
 import com.rise.client.security.KeyManager;
 import com.rise.client.security.KnownHostsManager;
 import net.schmizz.sshj.SSHClient;
-import net.schmizz.sshj.common.KeyType;
-import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
-import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile;
 import net.schmizz.sshj.transport.verification.HostKeyVerifier;
+import net.schmizz.sshj.userauth.keyprovider.KeyProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.StringReader;
 import java.security.PublicKey;
 import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -50,20 +50,20 @@ public class SSHConnectionManager {
      * Connect to a server using SSH key authentication (for established servers)
      */
     public SSHClient connectWithKey(ServerConfig server) throws IOException {
-        return connect(server, null, null);
+        return connect(server, null);
     }
 
     /**
      * Connect to a server using password authentication (for onboarding)
      */
     public SSHClient connectWithPassword(ServerConfig server, String password) throws IOException {
-        return connect(server, password, null);
+        return connect(server, password);
     }
 
     /**
      * Internal connect method
      */
-    private SSHClient connect(ServerConfig server, String password, KeyPair keyPair) throws IOException {
+    private SSHClient connect(ServerConfig server, String password) throws IOException {
         // Check if already connected
         SSHClient existing = connections.get(server.getId());
         if (existing != null && existing.isConnected()) {
@@ -102,11 +102,6 @@ public class SSHConnectionManager {
                     return false;
                 }
             }
-
-            @Override
-            public java.util.List<String> getKnownKeyAlgs(String host) {
-                return Arrays.asList("ssh-ed25519", "ecdsa-sha2-nistp256", "rsa-sha2-512");
-            }
         });
 
         // Connect
@@ -125,22 +120,10 @@ public class SSHConnectionManager {
                 // Key authentication
                 byte[] keyBytes = KeyManager.loadPrivateKey(server.getId());
 
-                // Try OpenSSH format first, then PKCS8
-                try {
-                    OpenSSHKeyFile openssh = new OpenSSHKeyFile();
-                    openssh.init(new String(keyBytes), "");
-                    ssh.authPublicKey(username, openssh);
-                    LOG.info("Authenticated with OpenSSH key to: {}", server.getHost());
-                } catch (Exception e) {
-                    try {
-                        PKCS8KeyFile pkcs8 = new PKCS8KeyFile();
-                        pkcs8.init(new String(keyBytes), "");
-                        ssh.authPublicKey(username, pkcs8);
-                        LOG.info("Authenticated with PKCS8 key to: {}", server.getHost());
-                    } catch (Exception e2) {
-                        throw new IOException("Failed to parse SSH private key", e2);
-                    }
-                }
+                // Load keys from string
+                KeyProvider keys = ssh.loadKeys(new String(keyBytes));
+                ssh.authPublickey(username, keys);
+                LOG.info("Authenticated with SSH key to: {}", server.getHost());
             }
         } catch (Exception e) {
             ssh.disconnect();
@@ -160,18 +143,21 @@ public class SSHConnectionManager {
         SSHClient ssh = new SSHClient();
 
         // Simplified host verifier for onboarding (always accept first time)
-        ssh.addHostKeyVerifier((hostname, port, key) -> {
-            String fingerprint = KnownHostsManager.getFingerprint(key);
-            String algorithm = KnownHostsManager.getAlgorithm(key);
+        ssh.addHostKeyVerifier(new HostKeyVerifier() {
+            @Override
+            public boolean verify(String hostname, int port, PublicKey key) {
+                String fingerprint = KnownHostsManager.getFingerprint(key);
+                String algorithm = KnownHostsManager.getAlgorithm(key);
 
-            if (verificationCallback != null) {
-                boolean accepted = verificationCallback.acceptNewHost(hostname, fingerprint, algorithm);
-                if (accepted) {
-                    knownHostsManager.addOrUpdateHost(hostname, fingerprint, algorithm);
+                if (verificationCallback != null) {
+                    boolean accepted = verificationCallback.acceptNewHost(hostname, fingerprint, algorithm);
+                    if (accepted) {
+                        knownHostsManager.addOrUpdateHost(hostname, fingerprint, algorithm);
+                    }
+                    return accepted;
                 }
-                return accepted;
+                return true; // Allow if no callback (onboarding mode)
             }
-            return true; // Allow if no callback (onboarding mode)
         });
 
         int port = server.getPort() != null ? server.getPort() : 22;
@@ -180,9 +166,8 @@ public class SSHConnectionManager {
         String username = server.getUsername() != null ? server.getUsername() : "rise-admin";
 
         try {
-            OpenSSHKeyFile openssh = new OpenSSHKeyFile();
-            openssh.init(new String(privateKeyBytes), "");
-            ssh.authPublicKey(username, openssh);
+            KeyProvider keys = ssh.loadKeys(new String(privateKeyBytes));
+            ssh.authPublickey(username, keys);
         } catch (Exception e) {
             ssh.disconnect();
             throw new IOException("Failed to authenticate with generated key", e);

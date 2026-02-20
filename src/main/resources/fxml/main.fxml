@@ -10,19 +10,20 @@
 
     <!-- Header -->
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="RISE Client" style="-fx-font-size: 24; -fx-font-weight: bold;"/>
+        <Label fx:id="headerLabel" text="RISE Client" style="-fx-font-size: 24; -fx-font-weight: bold;"/>
         <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="settingsButton" text="Settings" onAction="#onOpenSettings"/>
     </HBox>
 
     <!-- Server Selection -->
     <VBox spacing="5">
-        <Label text="Servers:"/>
+        <Label fx:id="serversLabel" text="Servers:"/>
         <HBox spacing="10">
             <ListView fx:id="serverListView" onMouseClicked="#onServerSelected"
                       prefWidth="300" prefHeight="100"/>
             <VBox spacing="5">
-                <Button text="Add Server" onAction="#onAddServer" prefWidth="100"/>
-                <Button text="Remove" onAction="#onRemoveServer" prefWidth="100"/>
+                <Button fx:id="addServerButton" text="Add Server" onAction="#onAddServer" prefWidth="100"/>
+                <Button fx:id="removeServerButton" text="Remove" onAction="#onRemoveServer" prefWidth="100"/>
             </VBox>
         </HBox>
     </VBox>
@@ -33,7 +34,7 @@
         <!-- Firewall Tab -->
         <Tab fx:id="firewallTab" text="Firewall">
             <VBox spacing="10" style="-fx-padding: 10;">
-                <Label text="Port Scanning &amp; Rules" style="-fx-font-size: 16;"/>
+                <Label fx:id="firewallTitleLabel" text="Port Scanning &amp; Rules" style="-fx-font-size: 16;"/>
 
                 <HBox spacing="10">
                     <Button fx:id="scanPortsButton" text="Scan Ports" onAction="#onScanPorts"/>
@@ -66,7 +67,7 @@
         <!-- Docker Tab -->
         <Tab fx:id="dockerTab" text="Docker">
             <VBox spacing="10" style="-fx-padding: 10;">
-                <Label text="Container Management" style="-fx-font-size: 16;"/>
+                <Label fx:id="dockerTitleLabel" text="Container Management" style="-fx-font-size: 16;"/>
 
                 <HBox spacing="10">
                     <Button fx:id="refreshDockerButton" text="Refresh" onAction="#onRefreshDocker"/>
@@ -92,7 +93,7 @@
         <!-- Updates Tab -->
         <Tab fx:id="updatesTab" text="Updates">
             <VBox spacing="10" style="-fx-padding: 10;">
-                <Label text="System Updates" style="-fx-font-size: 16;"/>
+                <Label fx:id="updatesTitleLabel" text="System Updates" style="-fx-font-size: 16;"/>
 
                 <HBox spacing="10">
                     <Button fx:id="checkUpdatesButton" text="Check Updates" onAction="#onCheckUpdates"/>
@@ -106,7 +107,7 @@
         <!-- Health Tab -->
         <Tab fx:id="healthTab" text="Health">
             <VBox spacing="10" style="-fx-padding: 10;">
-                <Label text="Server Health Check" style="-fx-font-size: 16;"/>
+                <Label fx:id="healthTitleLabel" text="Server Health Check" style="-fx-font-size: 16;"/>
 
                 <Button fx:id="checkHealthButton" text="Run Health Check" onAction="#onCheckHealth"/>
 

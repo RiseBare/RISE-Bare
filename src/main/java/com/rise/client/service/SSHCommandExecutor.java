@@ -4,14 +4,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.connection.channel.direct.Session;
-import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Callable;
 
 /**
  * SSH Command Executor for RISE
@@ -46,100 +51,137 @@ public class SSHCommandExecutor {
     }
 
     /**
-     * Execute a command and return JSON response
-     * V5.9: Fixed timeout handling - join() returns boolean, not throws exception
+     * Read stream to string
+     */
+    private String readStream(java.io.InputStream inputStream) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Execute a command and return JSON response with timeout
      */
     public JsonNode executeCommand(String command, CommandType type) throws IOException {
-        try (Session session = ssh.startSession()) {
-            session.allocateDefaultPTY();
+        final Session.Command[] cmdHolder = new Session.Command[1];
 
-            Session.Command cmd = session.exec(command);
+        Callable<JsonNode> task = () -> {
+            try (Session session = ssh.startSession()) {
+                session.allocateDefaultPTY();
 
-            // V5.9 FIX: join() returns false if timeout, true if completed
-            boolean completed = cmd.join(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
+                Session.Command cmd = session.exec(command);
+                cmdHolder[0] = cmd;
 
-            if (!completed) {
-                throw new IOException("Command timed out after " +
-                    type.getTimeoutMs() / 1000 + "s (no response from server)");
+                // Wait for command completion
+                cmd.join(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
+
+                // Check exit status
+                Integer exitStatus = cmd.getExitStatus();
+                if (exitStatus == null) {
+                    throw new IOException("Command completed but exit status unavailable");
+                }
+
+                if (exitStatus != 0) {
+                    String stderr = readStream(cmd.getErrorStream());
+                    throw new IOException("Command failed (exit " + exitStatus + "): " + stderr);
+                }
+
+                // Parse JSON response
+                String stdout = readStream(cmd.getInputStream());
+
+                try {
+                    JsonNode result = mapper.readTree(stdout);
+                    validateApiVersion(result);
+                    return result;
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    String preview = stdout.substring(0, Math.min(200, stdout.length()));
+                    throw new IOException("Invalid JSON response from server: " + preview, e);
+                }
             }
+        };
 
-            // Check exit status
-            Integer exitStatus = cmd.getExitStatus();
-            if (exitStatus == null) {
-                throw new IOException("Command completed but exit status unavailable");
+        try {
+            var executor = Executors.newSingleThreadExecutor();
+            Future<JsonNode> future = executor.submit(task);
+            JsonNode result = future.get(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
+            executor.shutdown();
+            return result;
+        } catch (TimeoutException e) {
+            if (cmdHolder[0] != null) {
+                try { cmdHolder[0].close(); } catch (Exception ignored) {}
             }
-
-            if (exitStatus != 0) {
-                String stderr = IOUtils.readFully(cmd.getErrorStream()).toString();
-                throw new IOException("Command failed (exit " + exitStatus + "): " + stderr);
-            }
-
-            // Parse JSON response
-            String stdout = IOUtils.readFully(cmd.getInputStream()).toString();
-
-            try {
-                JsonNode result = mapper.readTree(stdout);
-
-                // V5.9: Validate API version in every response
-                validateApiVersion(result);
-
-                return result;
-
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                // Truncate stdout for error message to avoid huge logs
-                String preview = stdout.substring(0, Math.min(200, stdout.length()));
-                throw new IOException("Invalid JSON response from server: " + preview, e);
-            }
-
-        } catch (net.schmizz.sshj.connection.ConnectionException e) {
-            throw new IOException("SSH connection lost", e);
+            throw new IOException("Command timed out after " + type.getTimeoutMs() / 1000 + "s");
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new IOException("Command execution failed: " + e.getCause().getMessage(), e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Command interrupted", e);
         }
     }
 
     /**
      * Execute command with data sent to stdin
-     * V5.9: Secure alternative to echo for JSON transmission
      */
     public JsonNode executeCommandWithStdin(String command, String stdinData,
                                            CommandType type) throws IOException {
-        try (Session session = ssh.startSession()) {
-            session.allocateDefaultPTY();
+        final Session.Command[] cmdHolder = new Session.Command[1];
 
-            Session.Command cmd = session.exec(command);
+        Callable<JsonNode> task = () -> {
+            try (Session session = ssh.startSession()) {
+                session.allocateDefaultPTY();
 
-            // Send data to stdin
-            try (OutputStream stdin = cmd.getOutputStream()) {
-                stdin.write(stdinData.getBytes(StandardCharsets.UTF_8));
-                stdin.flush();
+                Session.Command cmd = session.exec(command);
+                cmdHolder[0] = cmd;
+
+                // Send data to stdin
+                try (OutputStream stdin = cmd.getOutputStream()) {
+                    stdin.write(stdinData.getBytes(StandardCharsets.UTF_8));
+                    stdin.flush();
+                }
+
+                // Wait for completion with timeout
+                cmd.join(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
+
+                Integer exitStatus = cmd.getExitStatus();
+                if (exitStatus != 0) {
+                    String stderr = readStream(cmd.getErrorStream());
+                    throw new IOException("Command failed (exit " + exitStatus + "): " + stderr);
+                }
+
+                String stdout = readStream(cmd.getInputStream());
+
+                try {
+                    JsonNode result = mapper.readTree(stdout);
+                    validateApiVersion(result);
+                    return result;
+                } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    throw new IOException("Invalid JSON response: " +
+                        stdout.substring(0, Math.min(200, stdout.length())), e);
+                }
             }
+        };
 
-            // Wait for completion with timeout
-            boolean completed = cmd.join(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
-
-            if (!completed) {
-                throw new IOException("Command timed out after " +
-                    type.getTimeoutMs() / 1000 + "s");
+        try {
+            var executor = Executors.newSingleThreadExecutor();
+            Future<JsonNode> future = executor.submit(task);
+            JsonNode result = future.get(type.getTimeoutMs(), TimeUnit.MILLISECONDS);
+            executor.shutdown();
+            return result;
+        } catch (TimeoutException e) {
+            if (cmdHolder[0] != null) {
+                try { cmdHolder[0].close(); } catch (Exception ignored) {}
             }
-
-            Integer exitStatus = cmd.getExitStatus();
-            if (exitStatus != 0) {
-                String stderr = IOUtils.readFully(cmd.getErrorStream()).toString();
-                throw new IOException("Command failed (exit " + exitStatus + "): " + stderr);
-            }
-
-            String stdout = IOUtils.readFully(cmd.getInputStream()).toString();
-
-            try {
-                JsonNode result = mapper.readTree(stdout);
-                validateApiVersion(result);
-                return result;
-            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-                throw new IOException("Invalid JSON response: " +
-                    stdout.substring(0, Math.min(200, stdout.length())), e);
-            }
-
-        } catch (net.schmizz.sshj.connection.ConnectionException e) {
-            throw new IOException("SSH connection lost", e);
+            throw new IOException("Command timed out after " + type.getTimeoutMs() / 1000 + "s");
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new IOException("Command execution failed: " + e.getCause().getMessage(), e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Command interrupted", e);
         }
     }
 

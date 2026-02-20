@@ -1,6 +1,5 @@
 package com.rise.client.security;
 
-import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,6 +11,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Key Manager for RISE Client
@@ -51,23 +51,35 @@ public class KeyManager {
 
     /**
      * Generate a new SSH Ed25519 key pair and save in OpenSSH format
+     * Uses ssh-keygen command-line tool
      * @return KeyPairData containing private key bytes and public key string
      */
     public static KeyPairData generateKeyPair(String serverId) throws IOException {
         initializeSecureStorage();
 
+        Path tempDir = Files.createTempDirectory("rise_keys");
         try {
-            // Generate Ed25519 key pair
-            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("Ed25519");
-            keyGen.initialize(256);
-            KeyPair keyPair = keyGen.generateKeyPair();
+            Path tempPrivateKey = tempDir.resolve("key");
+            Path tempPublicKey = tempDir.resolve("key.pub");
 
-            // Convert to OpenSSH format using SSHJ
-            OpenSSHKeyFile sshKeyFile = new OpenSSHKeyFile();
-            sshKeyFile.setKeyPair(keyPair);
+            // Generate key using ssh-keygen
+            ProcessBuilder pb = new ProcessBuilder(
+                "ssh-keygen", "-t", "ed25519",
+                "-f", tempPrivateKey.toString(),
+                "-N", "", // No passphrase
+                "-C", "rise-" + serverId
+            );
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
 
-            String privateKeyOpenSSH = sshKeyFile.getPrivateKey();
-            String publicKeyOpenSSH = sshKeyFile.getPublicKey();
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new IOException("ssh-keygen failed with exit code: " + exitCode);
+            }
+
+            // Read generated keys
+            String privateKeyOpenSSH = Files.readString(tempPrivateKey);
+            String publicKeyOpenSSH = Files.readString(tempPublicKey).trim();
 
             // Save private key with secure permissions
             Path keyFile = KEYS_DIR.resolve(serverId + "_id_ed25519");
@@ -91,8 +103,16 @@ public class KeyManager {
                 publicKeyOpenSSH
             );
 
-        } catch (NoSuchAlgorithmException e) {
-            throw new IOException("Failed to generate Ed25519 key pair", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Key generation interrupted", e);
+        } finally {
+            // Clean up temp directory
+            try {
+                Files.walk(tempDir)
+                    .sorted((a, b) -> b.compareTo(a))
+                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+            } catch (IOException ignored) {}
         }
     }
 
@@ -126,7 +146,7 @@ public class KeyManager {
         Path keyFile = KEYS_DIR.resolve(serverId + "_id_ed25519");
 
         if (!Files.exists(keyFile)) {
-            throw new FileNotFoundException("Key not found: " + keyFile);
+            throw new java.io.FileNotFoundException("Key not found: " + keyFile);
         }
 
         // Verify permissions on Unix

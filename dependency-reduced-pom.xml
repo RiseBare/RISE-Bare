@@ -39,6 +39,23 @@
                   <mainClass>com.rise.client.RISEApplication</mainClass>
                 </transformer>
               </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/BCKEY.DSA</exclude>
+                    <exclude>META-INF/BCKEY.SF</exclude>
+                    <exclude>META-INF/BCKEY.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/ISSUERS</exclude>
+                  </excludes>
+                </filter>
+              </filters>
             </configuration>
           </execution>
         </executions>
@@ -46,10 +63,11 @@
     </plugins>
   </build>
   <properties>
-    <maven.compiler.target>21</maven.compiler.target>
+    <javafx.platform>win</javafx.platform>
     <maven.compiler.source>21</maven.compiler.source>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.16.0</jackson.version>
     <sshj.version>0.27.0</sshj.version>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 </project>

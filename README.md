@@ -70,6 +70,20 @@ java -jar target/rise-client-1.0.0.jar
 - Limited sudo privileges
 - OTP authentication for onboarding
 
+## Support
+
+If you find RISE useful, consider supporting its development:
+
+<script async
+  src="https://js.stripe.com/v3/buy-button.js">
+</script>
+
+<stripe-buy-button
+  buy-button-id="buy_btn_1T2qBtFglBlFeB6Rh7OXj2YB"
+  publishable-key="pk_live_51T2pbOFglBlFeB6RtCLvJhWgDVo0JJdU6x1fYwIXAmK8KKEd4bl3LD2cPlUbdLzdvALf6DTEjSJYBXtD4tgdBcCH00vlve9c3k"
+>
+</stripe-buy-button>
+
 ## License
 
 Proprietary - All rights reserved

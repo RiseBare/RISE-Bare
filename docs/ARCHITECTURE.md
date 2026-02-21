@@ -1,15 +1,15 @@
-# RISE Bare - Architecture Technique
+# RISE Bare - Technical Architecture
 
-## Vue d'ensemble
+## Overview
 
 ```
 ┌─────────────────────────────┐     SSH (port 22)     ┌─────────────────────────────┐
-│   RISE Bare Client          │ ─────────────────────►│   Debian 12/13+ Server     │
+│   RISE Bare Client         │ ─────────────────────►│   Debian 12/13+ Server     │
 │                             │                       │                             │
 │  • Firewall Panel          │                       │  /usr/local/bin/           │
 │  • Docker Panel            │                       │  • rise-firewall.sh        │
-│  • Updates Panel           │                       │  • rise-docker.sh          │
-│  • Health Check           │                       │  • rise-update.sh          │
+│  • Updates Panel          │                       │  • rise-docker.sh          │
+│  • Health Check           │                       │  • rise-update.sh           │
 │  • Server List            │                       │  • rise-onboard.sh         │
 │  • SSH Keys Manager       │                       │  • rise-health.sh          │
 └─────────────────────────────┘                       │  • setup-env.sh            │
@@ -18,70 +18,70 @@
 
 ---
 
-## Partie 1 : Les Scripts Serveur
+## Part 1: Server Scripts
 
-### 1.1 `setup-env.sh` - Installation des dépendances
+### 1.1 `setup-env.sh` - Dependencies Installation
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Prépare le serveur en installant les outils nécessaires
+**Role**: Prepares the server by installing required tools
 
-**Commandes supportées** :
-- `--install` : Installe nftables, jq, openssl, curl, wget si absents
-- `--check` : Vérifie si les dépendances sont présentes
+**Supported commands**:
+- `--install`: Installs nftables, jq, openssl, curl, wget, git if missing
+- `--check`: Checks if dependencies are present
 
 ```bash
-# Installation minimale
+# Minimal installation
 apt update
 apt install -y nftables jq openssl curl wget git
 ```
 
 ---
 
-### 1.2 `rise-onboard.sh` - Onboarding et gestion des clés SSH
+### 1.2 `rise-onboard.sh` - Onboarding and SSH Keys Management
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Gère l'installation initiale et les clés SSH des appareils
+**Role**: Handles initial installation and SSH keys for client devices
 
-**Commandes** :
+**Commands**:
 
-| Commande | Description |
-|----------|-------------|
-| `--check` | Vérifie si RISE est déjà installé |
-| `--finalize <ssh_key>` | Finalise l'installation, crée le user `rise-admin` |
-| `--add-device <ssh_key>` | Ajoute une clé SSH pour un nouvel appareil |
-| `--remove-device <ssh_key>` | Supprime une clé SSH |
-| `--list-devices` | Liste toutes les clés enregistrées |
+| Command | Description |
+|---------|-------------|
+| `--check` | Checks if RISE is already installed |
+| `--finalize <ssh_key>` | Finalizes installation, creates `rise-admin` user |
+| `--add-device <ssh_key>` | Adds SSH key for a new device |
+| `--remove-device <ssh_key>` | Removes SSH key |
+| `--list-devices` | Lists all registered keys |
 
-**Comportement** :
-- Crée le user `rise-admin` avec accès SSH par clé uniquement
-- Ajoute les clés dans `/home/rise-admin/.ssh/authorized_keys`
-- Configure sudoers pour rise-admin (accès aux scripts RISE uniquement)
+**Behavior**:
+- Creates `rise-admin` user with SSH key-only access
+- Adds keys to `/home/rise-admin/.ssh/authorized_keys`
+- Configures sudoers for rise-admin (RISE scripts access only)
 
 ---
 
-### 1.3 `rise-firewall.sh` - Gestion du pare-feu avec Fail2Ban
+### 1.3 `rise-firewall.sh` - Firewall Management with Fail2Ban
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Gère les règles NFTables et Fail2Ban de manière atomique avec rollback automatique
+**Role**: Manages NFTables and Fail2Ban rules atomically with automatic rollback
 
-**Commandes** :
+**Commands**:
 
-| Commande | Description |
-|----------|-------------|
-| `--scan` | Scan les ports ouverts |
-| `--apply` | Applique les règles (lit JSON depuis stdin) |
-| `--confirm` | Confirme les règles après timeout de 60s |
-| `--rollback` | Revient aux règles précédentes |
+| Command | Description |
+|---------|-------------|
+| `--scan` | Scan open ports |
+| `--apply` | Apply rules (reads JSON from stdin) |
+| `--confirm` | Confirm rules after 60s timeout |
+| `--rollback` | Revert to previous rules |
 
-**Fail2Ban** :
-- Activation automatique lors de l'installation
-- Surveillance SSH par défaut
-- Journalisation des tentatives bloquées
+**Fail2Ban**:
+- Automatic activation during installation
+- SSH monitoring by default
+- Logging of blocked attempts
 
-**Format JSON stdin** :
+**JSON stdin format**:
 ```json
 [
   {"port": 22, "proto": "tcp", "action": "allow", "cidr": "0.0.0.0/0"},
@@ -90,7 +90,7 @@ apt install -y nftables jq openssl curl wget git
 ]
 ```
 
-**Format réponse JSON** :
+**JSON response format**:
 ```json
 {
   "status": "success",
@@ -102,28 +102,28 @@ apt install -y nftables jq openssl curl wget git
 
 ---
 
-### 1.4 `rise-docker.sh` - Gestion Docker
+### 1.4 `rise-docker.sh` - Docker Management
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Contrôle les containers Docker et les stacks docker-compose
+**Role**: Controls Docker containers and docker-compose stacks
 
-**Commandes** :
+**Commands**:
 
-| Commande | Description |
-|----------|-------------|
-| `--list` | Liste tous les containers |
-| `--start <id>` | Démarre un container |
-| `--stop <id>` | Arrête un container |
-| `--restart <id>` | Redémarre un container |
+| Command | Description |
+|---------|-------------|
+| `--list` | List all containers |
+| `--start <id>` | Start a container |
+| `--stop <id>` | Stop a container |
+| `--restart <id>` | Restart a container |
 | `--update <id>` | Stop, pull latest image, start |
-| `--logs <id>` | Affiche les logs |
-| `--compose-up <path>` | Lance docker-compose |
-| `--compose-down <path>` | Arrête docker-compose |
-| `--compose-pull <path>` | Met à jour les images |
-| `--compose-add <git_url>` | Clone un dépôt et lance docker-compose |
+| `--logs <id>` | Display logs |
+| `--compose-up <path>` | Run docker-compose |
+| `--compose-down <path>` | Stop docker-compose |
+| `--compose-pull <path>` | Update images |
+| `--compose-add <git_url>` | Clone repo and run docker-compose |
 
-**Format réponse `--list`** :
+**`--list` response format**:
 ```json
 {
   "status": "success",
@@ -135,27 +135,26 @@ apt install -y nftables jq openssl curl wget git
 
 ---
 
-### 1.5 `rise-update.sh` - Gestion des mises à jour APT
+### 1.5 `rise-update.sh` - APT Updates Management
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Gère les mises à jour APT avec détection des mises à jour de sécurité et mises à jour granulaire
+**Role**: Manages APT updates with security patch detection and granular updates
 
-**Commandes** :
+**Commands**:
 
-| Commande | Description |
-|----------|-------------|
-| `--check` | Vérifie les mises à jour disponibles |
-| `--check-granular` | Vérifie avec liste de paquets spécifique |
-| `--upgrade` | Installe toutes les mises à jour |
-| `--upgrade-pkgs <packages>` | Met à jour uniquement les paquets spécifiés (JSON array) |
+| Command | Description |
+|---------|-------------|
+| `--check` | Check available updates |
+| `--upgrade` | Install all updates |
+| `--upgrade-pkgs <packages>` | Update only specified packages (JSON array) |
 
-**Format `--check-granular` stdin** :
+**`--check-granular` stdin format**:
 ```json
 {"packages": ["nginx", "openssl", "curl"]}
 ```
 
-**Format réponse `--check`** :
+**`--check` response format**:
 ```json
 {
   "status": "success",
@@ -172,22 +171,27 @@ apt install -y nftables jq openssl curl wget git
 
 ---
 
-### 1.6 `rise-health.sh` - Vérification d'intégrité
+### 1.6 `rise-health.sh` - Integrity Verification
 
-**Version** : `1.0.0`
+**Version**: `1.0.0`
 
-**Rôle** : Vérifie que la configuration serveur est intacte
+**Role**: Verifies server configuration integrity
 
-**Vérifications** :
-- `sudoers_file` : Fichier sudoers de rise-admin existe
-- `ssh_dropin_clean` : Pas de configuration SSH personnalisée suspecte
-- `nftables_include` : NFTables est configuré
-- `scripts_present` : Tous les scripts RISE sont présents
-- `fail2ban_status` : Fail2Ban est actif
-- `docker_installed` : Docker est installé
-- `rise_version` : Version des scripts
+**Checks**:
+- `sudoers_file`: rise-admin sudoers file exists
+- `ssh_dropin_clean`: No suspicious custom SSH config
+- `nftables_include`: NFTables is configured
+- `scripts_present`: All RISE scripts are present
+- `fail2ban_status`: Fail2Ban is active
+- `docker_installed`: Docker is installed
+- `rise_version`: Scripts version
+- `disk_space`: Disk usage
+- `memory`: RAM usage
+- `cpu`: CPU stats
+- `network`: Network I/O
+- `users`: System users
 
-**Format réponse JSON** :
+**JSON response format**:
 ```json
 {
   "status": "success",
@@ -199,82 +203,88 @@ apt install -y nftables jq openssl curl wget git
     "scripts_present": "pass",
     "fail2ban_status": "pass",
     "docker_installed": "pass",
-    "rise_version": "1.0.0"
+    "rise_version": "1.0.0",
+    "disk_space": {"total": "100G", "used": "50G", "free": "50G", "percent": 50},
+    "memory": {"total": "16G", "used": "8G", "free": "8G", "percent": 50},
+    "cpu": {"cores": 4, "usage": 25},
+    "network": {"in": "1GB", "out": "500MB"},
+    "users": [{"name": "root", "sudoers": true}, {"name": "rise-admin", "sudoers": false}]
   }
 }
 ```
 
 ---
 
-## Partie 2 : Le Client RISE Bare
+## Part 2: RISE Bare Client
 
-### 2.1 Architecture Réseau
+### 2.1 Network Architecture
 
-**Protocole** : SSH (port 22)
+**Protocol**: SSH (port 22)
 
-**Méthodes de connexion** :
-1. **Password** : Connexion initiale avec login/password (pour onboarding)
-2. **Key** : Connexion avec clé Ed25519 privée (après onboarding)
+**Connection methods**:
+1. **Password**: Initial connection with login/password (for onboarding)
+2. **Key**: Connection with Ed25519 private key (after onboarding)
 
-**Sécurité TOFU** :
-- Sauvegarde l'empreinte du serveur lors de la première connexion
-- Demande confirmation si l'empreinte change (possible attaque MITM)
+**TOFU Security**:
+- Saves server fingerprint on first connection
+- Prompts confirmation if fingerprint changes (possible MITM attack)
 
 ---
 
-### 2.2 Interface Utilisateur
+### 2.2 User Interface
 
-**Fenetres** :
+**Windows**:
 
 1. **Main Window**
-   - Liste des serveurs configurés
-   - Boutons Add/Remove Server
-   - 4 onglets : Firewall, Docker, Updates, Health
-   - Bouton Settings
+   - List of configured servers
+   - Add/Remove Server buttons
+   - 4 tabs: Firewall, Docker, Updates, Health
+   - Settings button
 
 2. **Onboarding Dialog**
-   - Nom du serveur
+   - Server name
    - IP/Hostname
-   - Port SSH (défaut: 22)
-   - Username (root ou sudo user)
+   - SSH port (default: 22)
+   - Username (root or sudo user)
    - Password
-   - **3 modes de sécurité SSH** :
-     - Mode 1 : Password pour tous (test uniquement)
-     - Mode 2 : Clé SSH pour root, password pour autres utilisateurs
-     - Mode 3 : Clé SSH pour tous (recommandé)
+   - **3 SSH security modes**:
+     - Mode 1: Password for all (testing only)
+     - Mode 2: SSH key for root, password for other users
+     - Mode 3: SSH key for all (recommended)
 
 3. **Settings Dialog**
-   - Sélecteur de langue (10 langues)
-   - Case "Auto-update scripts on connect"
-   - Lien donation Stripe
-   - Bouton "Check for updates"
+   - Language selector (10 languages)
+   - Checkbox "Auto-update scripts on connect"
+   - Stripe donation link
+   - "Check for updates" button
 
 ---
 
-### 2.3 Flux Onboarding
+### 2.3 Onboarding Flow
 
 ```
-1. User entre credentials (host, port, user, password)
-2. Client SSH connect avec password
-3. Script --check : RISE installé ?
+1. User enters credentials (host, port, user, password)
+2. Client SSH connects with password
+3. Script --check: RISE installed?
 
-   OUI → --add-device <clé_SSH_publique>
+   YES → --add-device <public_ssh_key>
+   Generate Ed25519 key for client device if needed
+   Save private key locally
 
-   NON → --install (setup-env.sh)
-         --finalize <clé_SSH_publique>
-         Configure SSH security mode
-
-4. Génère clé Ed25519 pour ce device
-5. Sauvegarde clé privée localement
-6. Change username → rise-admin
-7. Supprime le password de la config
+   NO → --install (setup-env.sh)
+        --finalize <public_ssh_key>
+        Configure SSH security mode
+4. Create rise-admin user
+5. Generate Ed25519 key for client device
+6. Save private key locally
+7. Propose 3 SSH security modes and apply user's choice
 ```
 
 ---
 
-### 2.4 Formats de données locaux
+### 2.4 Local Data Formats
 
-**Config serveurs** :
+**Servers config**:
 ```json
 {
   "servers": [
@@ -291,26 +301,27 @@ apt install -y nftables jq openssl curl wget git
 }
 ```
 
-**Paramètres** :
+**Settings**:
 ```json
 {
   "language": "en",
   "autoUpdateScripts": true,
-  "lastUpdateCheck": "2024-01-15T10:30:00Z"
+  "lastUpdateCheck": "2024-01-15T10:30:00Z",
+  "clientVersion": "1.0.0"
 }
 ```
 
 ---
 
-### 2.5 Internationalisation (i18n)
+### 2.5 Internationalization (i18n)
 
-**Source** : Fichiers JSON sur GitHub avec gestion de versions
-- URL : `https://raw.githubusercontent.com/RiseBare/RISE-Bare/main/i18n/{lang}.json?version={version}`
-- Version : Chaque fichier contient un champ `version`
-- Langues : en, fr, de, es, zh, ja, ko, th, pt, ru
-- Cache local avec vérification de version avant mise à jour
+**Source**: Versioned JSON files on GitHub
+- URL: `https://raw.githubusercontent.com/RiseBare/RISE-Bare/main/i18n/{lang}.json?version={version}`
+- Version: Each file contains a `version` field
+- Languages: en, fr, de, es, zh, ja, ko, th, pt, ru
+- Local cache with version check before update
 
-**Format fichier i18n** :
+**i18n file format**:
 ```json
 {
   "version": "1.0.0",
@@ -321,116 +332,125 @@ apt install -y nftables jq openssl curl wget git
 
 ---
 
-## Partie 3 : Options du Client
+## Part 3: Client Options
 
 ### 3.1 Firewall
-- [x] Scanner ports ouverts
-- [x] Ajouter règle (port, proto, action, CIDR)
-- [x] Supprimer règle
-- [x] Appliquer règles
-- [x] Confirmer (après 60s)
+- [x] Scan open ports
+- [x] Add rule (port, proto, action, CIDR)
+- [x] Remove rule
+- [x] Apply rules
+- [x] Confirm (after 60s)
 - [x] Rollback
-- [x] Status Fail2Ban
-- [ ] **In-App Purchase** : Configuration Fail2Ban avancée
+- [x] Fail2Ban status
+- [x] Daily/weekly/monthly banned IPs report
+- [x] Fail2Ban rules editing
+- [ ] **In-App Purchase**: Daily/weekly/monthly banned IPs report, Fail2Ban rules editing
 
 ### 3.2 Docker
-- [x] Lister containers
+- [x] List containers
 - [x] Start
 - [x] Stop
 - [x] Restart
 - [x] Update (stop, pull, start)
 - [x] Logs
 - [x] Docker Compose: up/down/pull
-- [x] **Docker Compose: ajout par URL GitHub**
-- [ ] **In-App Purchase** : Éditeur Docker Compose visuel
+- [x] Visual Docker Compose editor
+- [x] **Docker Compose: add via GitHub URL**
+- [ ] **In-App Purchase**: Visual Docker Compose editor, Docker Compose add via GitHub URL
 
 ### 3.3 Updates
-- [x] Vérifier mises à jour
-- [x] Mettre à jour tout
-- [x] **Vérification granulaire par paquet**
-- [x] **Mise à jour granulaire (paquets sélectionnés)**
-- [ ] **In-App Purchase** : Historique des mises à jour
+- [x] Check for updates
+- [x] Install all updates
+- [x] **Granular package check**
+- [x] **Granular update (selected packages)**
+- [ ] **In-App Purchase**: Granular package selection
 
 ### 3.4 Health
-- [x] Vérification intégrité complète
-- [x] Affichage status (pass/fail] Version des)
-- [x scripts
-- [ ] **In-App Purchase** : Alertes automatisées par email
+- [x] Full integrity check
+- [x] Display status (pass/fail, scripts version)
+- [x] Automated email alerts
+- [x] Server stats: disk space (total/used/free/%), RAM (total/used/free/%), CPU (cores, usage for 1min/5min/30min/1h/6h/12h/24h/3d/1w), network I/O (1min/5min/30min/1h/6h/12h/24h/3d/1w), all users (with sudoers/sudo group mention)
+- [ ] **In-App Purchase**: Server stats, Automated email alerts
 
 ### 3.5 Server Management
-- [x] Ajouter serveur
-- [x] Supprimer serveur
-- [x] Connexion auto
-- [ ] **In-App Purchase** : Serveurs illimités (limite gratuite: 3)
+- [x] Add server
+- [x] Remove server
+- [x] Auto-connect
+- [ ] **In-App Purchase**: Unlimited servers (free limit: 3)
 
 ---
 
-## Partie 4 : Système d'Achat In-App (à implémenter)
+## Part 4: In-App Purchase System (to implement)
 
-### 4.1 Fonctionnalités Gratuites
+### 4.1 Free Features
 
-| Fonctionnalité | Limite |
-|----------------|--------|
-| Serveurs gérés | 3 |
-| APT upgrade | Tous |
+| Feature | Limit |
+|---------|-------|
+| Servers managed | 3 |
+| APT upgrade | All packages |
 | Docker | Start/Stop/Restart/Update |
 | Docker Compose | up/down/pull |
+| Firewall | Scan/Add/Remove/Apply rules, status |
+| Health | Basic integrity check |
 
-### 4.2 Fonctionnalités Payantes (In-App Purchase)
+### 4.2 Paid Features (In-App Purchase)
 
-| Fonctionnalité | Description |
-|----------------|-------------|
-| Serveurs illimités | Ajouter plus de 3 serveurs |
-| APT granulaire | Sélectionner les paquets à mettre à jour |
-| Docker Compose Editor | Interface visuelle pour modifier docker-compose |
-| Docker Compose URL | Ajouter un dépôt GitHub directement |
-| Alertes santé | Notifications par email en cas de problème |
+| Feature | Description |
+|---------|-------------|
+| Unlimited servers | Add more than 3 servers |
+| APT granular | Select specific packages to update |
+| Docker Compose Editor | Visual editor for docker-compose files |
+| Docker Compose GitHub | Add repository GitHub URL directly |
+| Firewall Reports | Daily/weekly/monthly banned IPs reports |
+| Firewall Rules Editing | Custom Fail2Ban rules |
+| Server Stats | Detailed disk/RAM/CPU/network stats |
+| Email Alerts | Automated health alerts via email |
 
-### 4.3 Implémentation
+### 4.3 Implementation
 
-Chaque fonction payante doit :
-1. Vérifier le statut de l'achat via API
-2. Si non acheté : afficher dialogue "Fonctionnalité payante" avec bouton donation/achat
-3. Si acheté : exécuter la fonction normalement
+Each paid feature must:
+1. Check purchase status via API
+2. If not purchased: show "Premium feature" dialog with purchase/donation button
+3. If purchased: execute the feature normally
 
 ---
 
-## Partie 5 : Gestion des Versions
+## Part 5: Version Management
 
-### 5.1 Stratégie de Versioning
+### 5.1 Versioning Strategy
 
-**Scripts** : Chaque script contient sa propre version
-- `setup-env.sh` : `VERSION="1.0.0"`
-- `rise-onboard.sh` : `VERSION="1.0.0"`
+**Scripts**: Each script contains its own version
+- `setup-env.sh`: `VERSION="1.0.0"`
+- `rise-onboard.sh`: `VERSION="1.0.0"`
 - etc.
 
-**Fichiers i18n** : Chaque fichier contient un champ `version`
-- `en.json` : `"version": "1.0.0"`
+**i18n files**: Each file contains a `version` field
+- `en.json`: `"version": "1.0.0"`
 
-**Client** : Version dans les paramètres
-- `~/.rise/settings.json` : `"clientVersion": "1.0.0"`
+**Client**: Version in settings
+- `~/.rise/settings.json`: `"clientVersion": "1.0.0"`
 
-### 5.2 Vérification des Mises à Jour
+### 5.2 Update Checking
 
 ```
-1. Au démarrage, le client check settings.lastUpdateCheck
-2. Si > 24h ou autoUpdateScripts=true :
-   a. Récupère version.json sur GitHub
-   b. Pour chaque script : compare version locale vs remote
-   c. Pour chaque fichier i18n : compare version
-   d. Affiche liste des mises à jour disponibles
-3. User peut choisir : tout mettre à jour, ou sélection partielle
+1. On startup, client checks settings.lastUpdateCheck
+2. If > 6h or autoUpdateScripts=true:
+   a. Fetch version.json from GitHub
+   b. For each script: compare local vs remote version
+   c. For each i18n file: compare version
+   d. Display list of available updates
+3. User can choose: update all, or partial selection
 ```
 
 ---
 
-## Annexe : Correspondance Scripts <-> UI
+## Appendix: Scripts <-> UI Mapping
 
-| UI Action | Script | Commande |
-|-----------|--------|----------|
+| UI Action | Script | Command |
+|-----------|--------|---------|
 | Scan ports | rise-firewall | --scan |
 | Add rule | rise-firewall | --apply (stdin) |
-| Remove rule | rise-firewall | --apply (sans la règle) |
+| Remove rule | rise-firewall | --apply (without rule) |
 | Confirm rules | rise-firewall | --confirm |
 | Rollback | rise-firewall | --rollback |
 | List containers | rise-docker | --list |

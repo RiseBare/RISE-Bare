@@ -1,16 +1,16 @@
-# RISE - Remote Infrastructure Security & Efficiency
+# RISE Bare - Remote Infrastructure Security & Efficiency
 
-RISE is a professional-grade, agent-less server management platform designed for Debian 12/13+ servers. Manage your infrastructure securely via SSH with a polished desktop client.
+RISE Bare is a professional-grade, agent-less server management platform designed for Debian 12/13+ servers. Manage your infrastructure securely via SSH with a polished mobile and desktop client.
 
 ## Features
 
-- **Firewall Management** - Atomic rule application with automatic rollback (60s timeout)
-- **Docker Control** - Start, stop, restart, list containers
+- **Firewall Management** - Atomic rule application with automatic rollback (90s timeout)
+- **Docker Control** - Start, stop, restart, list containers and compose projects
 - **System Updates** - APT update orchestration with security patch detection
 - **SSH Key Authentication** - TOFU host key verification + per-device SSH keys
-- **Multi-Device Support** - Manage servers from multiple computers/phones
+- **Multi-Device Support** - Manage servers from multiple computers/phones via OTP
 - **Health Monitoring** - Server integrity checks (sudoers, SSH config, nftables, scripts)
-- **Auto-Update** - Scripts update automatically on each connection
+- **Auto-Update** - Scripts update automatically on startup and every 6 hours
 - **3 Security Modes** - Choose SSH security level (password, hybrid, key-only)
 - **Internationalization** - 10 languages supported
 
@@ -18,16 +18,16 @@ RISE is a professional-grade, agent-less server management platform designed for
 
 ```
 ┌─────────────────────────────┐     SSH (port 22)     ┌─────────────────────────────┐
-│   RISE Client (JavaFX)      │ ─────────────────────►│   Debian 12/13+ Server     │
+│   RISE Client (Flutter)      │ ─────────────────────►│   Debian 12/13+ Server     │
 │                             │                       │                             │
-│  • Firewall Panel          │                       │  /usr/local/bin/           │
-│  • Docker Panel            │                       │  • rise-firewall.sh        │
+│  • Firewall Panel           │                       │  /usr/local/bin/           │
+│  • Docker Panel             │                       │  • rise-firewall.sh        │
 │  • Updates Panel           │                       │  • rise-docker.sh          │
-│  • Health Check           │                       │  • rise-update.sh          │
-│  • Server List            │                       │  • rise-onboard.sh         │
-│  • SSH Keys Manager       │                       │  • rise-health.sh          │
-└─────────────────────────────┘                       │  • setup-env.sh            │
-                                                         └─────────────────────────────┘
+│  • Health Check            │                       │  • rise-update.sh          │
+│  • Server List             │                       │  • rise-onboard.sh         │
+│  • Security Tab            │                       │  • rise-health.sh          │
+│    (SSH Keys, Modes)       │                       │  • setup-env.sh            │
+└─────────────────────────────┘                       └─────────────────────────────┘
 ```
 
 ## Requirements
@@ -38,24 +38,19 @@ RISE is a professional-grade, agent-less server management platform designed for
 - Internet access (to download scripts from GitHub)
 
 ### Client
-- Java 21+
-- Maven 3.9+
+
+**Download from:**
+- [Google Play](https://play.google.com/store) (Android)
+- [Apple App Store](https://apps.apple.com) (iOS)
+- [GitHub Releases](https://github.com/RiseBare/RISE-Bare/releases) (macOS, Linux, Windows)
 
 ## Quick Start
 
-### 1. Build the Client
+### 1. Download the Client
 
-```bash
-mvn clean package
-```
+Download from your platform's store or from GitHub Releases.
 
-### 2. Run the Client
-
-```bash
-java -jar target/rise-client-1.0.0.jar
-```
-
-### 3. Add Your Server
+### 2. Add Your Server
 
 Click "Add Server" and enter:
 - Server name (e.g., "My VPS")
@@ -70,14 +65,15 @@ The app will automatically:
 - Add your device's SSH key
 - Configure SSH security based on your chosen mode
 
-That's it! Your server is now managed by RISE.
+That's it! Your server is now managed by RISE Bare.
 
 ## Security Features
 
 - **TOFU SSH Host Keys** - First connection validates server fingerprint
-- **Per-Device SSH Keys** - Each client device has its own key
-- **Limited Sudo Privileges** - Rise-admin has restricted sudo rights
-- **Automatic Script Updates** - Scripts update from GitHub on each connection
+- **Per-Device SSH Keys** - Each client device has its own Ed25519 key
+- **Limited Sudo Privileges** - rise-admin has restricted sudo rights for RISE scripts only
+- **Automatic Script Updates** - Scripts update from GitHub on startup and every 6 hours
+- **OTP Device Registration** - Add new devices securely via rolling 6-digit codes
 
 ## Security Modes
 
@@ -89,11 +85,11 @@ When adding a server, choose your SSH security level:
 | 2 | Root/sudo with SSH key only, others can use password |
 | 3 | SSH key required for all users (recommended) |
 
-See [SECURITY_MODES.md](docs/SECURITY_MODES.md) for details.
+See [SECURITY_MODES.en.md](docs/SECURITY_MODES.en.md) for details.
 
 ## Support
 
-If you find RISE useful, consider supporting its development:
+If you find RISE Bare useful, consider supporting its development:
 
 [![Donate with Stripe](https://img.shields.io/badge/Donate-Support_RISE-635bff?style=for-the-badge)](https://buy.stripe.com/00waEX8WUaso4jB7cL8k801)
 

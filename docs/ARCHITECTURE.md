@@ -27,13 +27,13 @@
 **Role**: Prepares the server by installing required tools
 
 **Supported commands**:
-- `--install`: Installs nftables, jq, openssl, curl, wget, git if missing
+- `--install`: Installs nftables, jq, openssl, curl, wget, fail2ban, git if missing
 - `--check`: Checks if dependencies are present
 
 ```bash
 # Minimal installation
 apt update
-apt install -y nftables jq openssl curl wget git
+apt install -y nftables jq openssl curl wget fail2ban git
 ```
 
 ---
@@ -184,6 +184,8 @@ apt install -y nftables jq openssl curl wget git
 - `scripts_present`: All RISE scripts are present
 - `fail2ban_status`: Fail2Ban is active
 - `docker_installed`: Docker is installed
+- `docker_containers_rec_by_docker`: Docker containers listed by docker
+- `docker_containers_running`: Docker containers currently running
 - `rise_version`: Scripts version
 - `disk_space`: Disk usage
 - `memory`: RAM usage
@@ -203,6 +205,7 @@ apt install -y nftables jq openssl curl wget git
     "scripts_present": "pass",
     "fail2ban_status": "pass",
     "docker_installed": "pass",
+    "docker_running": "pass",
     "rise_version": "1.0.0",
     "disk_space": {"total": "100G", "used": "50G", "free": "50G", "percent": 50},
     "memory": {"total": "16G", "used": "8G", "free": "8G", "percent": 50},
@@ -238,7 +241,7 @@ apt install -y nftables jq openssl curl wget git
 1. **Main Window**
    - List of configured servers
    - Add/Remove Server buttons
-   - 4 tabs: Firewall, Docker, Updates, Health
+   - 4 tabs: Security (Firewall, fail2ban), Services (Docker), Updates, Health
    - Settings button
 
 2. **Onboarding Dialog**
@@ -269,14 +272,14 @@ apt install -y nftables jq openssl curl wget git
 
    YES → --add-device <public_ssh_key>
    Generate Ed25519 key for client device if needed
-   Save private key locally
+   Save private key locally to rise-admin user
 
    NO → --install (setup-env.sh)
         --finalize <public_ssh_key>
         Configure SSH security mode
 4. Create rise-admin user
 5. Generate Ed25519 key for client device
-6. Save private key locally
+6. Save private key locally to rise-admin user
 7. Propose 3 SSH security modes and apply user's choice
 ```
 

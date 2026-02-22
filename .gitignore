@@ -23,8 +23,7 @@ Thumbs.db
 .rise/
 *.log
 
-# Maven
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-release.properties
+# Dev plan book
+PROMPT-ClaudeCode.md
+RISE-Flutter-WorkPlan-V7.0.md
+RISE-Specs-V7.0.md

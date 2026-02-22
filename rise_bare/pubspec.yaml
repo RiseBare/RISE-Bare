@@ -1,0 +1,54 @@
+name: rise_bare
+description: "RISE Bare - Remote Infrastructure Security & Efficiency"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # SSH client
+  dartssh2: ^2.13.0
+
+  # Secure storage for SSH private key
+  flutter_secure_storage: ^9.2.4
+
+  # Local file paths
+  path_provider: ^2.1.5
+
+  # HTTP downloads from GitHub
+  http: ^1.3.0
+
+  # SHA256 verification
+  crypto: ^3.0.6
+
+  # JSON serialization
+  json_annotation: ^4.9.0
+
+  # State management
+  provider: ^6.1.2
+
+  # UUID generation
+  uuid: ^4.5.1
+
+  # Internationalization
+  intl: any
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: any
+  json_serializable: any
+  mockito: any
+
+# NO assets section - all files downloaded from GitHub
+flutter:
+  uses-material-design: true

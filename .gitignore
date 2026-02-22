@@ -4,6 +4,10 @@ target/
 *.jar
 *.war
 
+# Flutter build outputs
+rise_bare/build/
+rise_bare/.dart_tool/
+
 # IDE
 .idea/
 *.iml
@@ -27,3 +31,4 @@ Thumbs.db
 PROMPT-ClaudeCode.md
 RISE-Flutter-WorkPlan-V7.0.md
 RISE-Specs-V7.0.md
+docs/V6.0\ NEW\ ARCHITECTURE\ MAP.md

@@ -1,0 +1,63 @@
+name: Build RISE-Bare
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+
+      - name: Enable desktop on Linux/Windows/macOS
+        if: matrix.platform != 'android'
+        run: |
+          flutter config --enable-${{ matrix.platform }}-desktop
+
+      - name: Get dependencies
+        run: cd rise_bare && flutter pub get
+
+      - name: Build ${{ matrix.platform }}
+        run: |
+          cd rise_bare
+          if [ "${{ matrix.platform }}" = "android" ]; then
+            flutter build apk --debug
+          elif [ "${{ matrix.platform }}" = "linux" ]; then
+            flutter build linux --release
+          elif [ "${{ matrix.platform }}" = "windows" ]; then
+            flutter build windows --release
+          elif [ "${{ matrix.platform }}" = "macos" ]; then
+            flutter build macos --release
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rise-bare-${{ matrix.platform }}
+          path: |
+            rise_bare/build/app/outputs/flutter-apk/app-debug.apk
+            rise_bare/build/linux/x64/release/bundle/
+            rise_bare/build/windows/x64/release/bundle/
+            rise_bare/build/macos/Build/Products/Release/

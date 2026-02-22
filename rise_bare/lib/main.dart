@@ -21,7 +21,7 @@ class RISEApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
-        ChangeNotifierProvider(create: (_) => ServerProvider()),
+        ChangeNotifierProvider(create: (_) => ServerProvider()..init()),
       ],
       child: Consumer<LocaleProvider>(
         builder: (context, localeProvider, _) {

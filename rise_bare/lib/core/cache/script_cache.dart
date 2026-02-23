@@ -46,39 +46,79 @@ class ScriptCache {
   Future<void> downloadScript(String scriptName) async {
     await _ensureScriptsDir();
 
+    final localFile = File('${_scriptsDir.path}/$scriptName');
+    
     // Get expected SHA256 from manifest
     final manifest = await _getManifest();
-    final scriptInfo = manifest['scripts'].firstWhere(
+    final scripts = manifest['scripts'] as List?;
+    if (scripts == null || scripts.isEmpty) {
+      // No manifest - check if we have local file
+      if (!await localFile.exists()) {
+        throw CacheIntegrityException(
+          'Script $scriptName not found and network unavailable',
+        );
+      }
+      return; // Use existing local file
+    }
+
+    final scriptInfo = scripts.firstWhere(
       (s) => s['name'] == scriptName,
-      orElse: () => throw CacheIntegrityException(
-        'Script $scriptName not found in manifest',
-      ),
+      orElse: () => <String, dynamic>{},
     );
 
-    final expectedSha256 = scriptInfo['sha256'] as String;
-    final url = scriptInfo['url'] as String;
-
-    // Download the script
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode != 200) {
-      throw CacheIntegrityException(
-        'Failed to download $scriptName: HTTP ${response.statusCode}',
-      );
+    if (scriptInfo.isEmpty) {
+      // Script not in manifest, use local if exists
+      if (!await localFile.exists()) {
+        throw CacheIntegrityException('Script $scriptName not found in manifest');
+      }
+      return;
     }
 
-    final bytes = response.bodyBytes;
+    final expectedSha256 = scriptInfo['sha256'] as String?;
+    final url = scriptInfo['url'] as String?;
 
-    // Verify SHA256
-    final digest = sha256.convert(bytes);
-    if (digest.toString() != expectedSha256) {
-      throw CacheIntegrityException(
-        'SHA256 mismatch for $scriptName — tampering detected',
-      );
+    // Check if local file exists and matches SHA256
+    if (await localFile.exists()) {
+      final localBytes = await localFile.readAsBytes();
+      final localDigest = sha256.convert(localBytes).toString();
+      if (localDigest == expectedSha256) {
+        return; // Already up to date
+      }
     }
 
-    // Save to cache
-    final file = File('${_scriptsDir.path}/$scriptName');
-    await file.writeAsBytes(bytes);
+    // Try to download if URL available
+    if (url == null || url.isEmpty) {
+      if (!await localFile.exists()) {
+        throw CacheIntegrityException('Script $scriptName not available');
+      }
+      return;
+    }
+
+    try {
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode != 200) {
+        if (!await localFile.exists()) {
+          throw CacheIntegrityException('Failed to download $scriptName');
+        }
+        return; // Use existing local file
+      }
+
+      final bytes = response.bodyBytes;
+
+      // Verify SHA256
+      final digest = sha256.convert(bytes);
+      if (digest.toString() != expectedSha256) {
+        throw CacheIntegrityException('SHA256 mismatch for $scriptName');
+      }
+
+      // Save to cache
+      await localFile.writeAsBytes(bytes);
+    } catch (e) {
+      // Network error - use local file if exists
+      if (!await localFile.exists()) {
+        throw CacheIntegrityException('Script $scriptName unavailable: $e');
+      }
+    }
   }
 
   /// Get the manifest from GitHub
@@ -93,16 +133,14 @@ class ScriptCache {
     // Download from GitHub
     final url = '$kBaseUrl/manifest.json';
     final response = await http.get(Uri.parse(url));
-    if (response.statusCode != 200) {
-      throw CacheIntegrityException(
-        'Failed to download manifest: HTTP ${response.statusCode}',
-      );
+    if (response.statusCode == 200) {
+      // Cache the manifest locally for offline use
+      await localManifestFile.writeAsString(response.body);
+      return json.decode(response.body) as Map<String, dynamic>;
     }
 
-    // Cache the manifest locally
-    await localManifestFile.writeAsString(response.body);
-
-    return json.decode(response.body) as Map<String, dynamic>;
+    // Network unavailable - return empty manifest, use local/bundled files
+    return {'version': '0.0.0', 'scripts': [], 'i18n': {}, 'ports_db': {}};
   }
 
   /// Sync scripts - download only modified ones

@@ -24,20 +24,34 @@ class I18nCache {
     }
   }
 
-  /// Get the i18n version manifest from GitHub
+  /// Get the i18n version manifest - prefer local, fallback to GitHub
   Future<Map<String, dynamic>> _getVersionManifest() async {
     // First check local cache
     final localVersionFile = File('${_i18nDir.path}/version.json');
     if (await localVersionFile.exists()) {
-      final content = await localVersionFile.readAsString();
-      return json.decode(content) as Map<String, dynamic>;
+      try {
+        final content = await localVersionFile.readAsString();
+        return json.decode(content) as Map<String, dynamic>;
+      } catch (e) {
+        // Corrupted, try GitHub
+      }
     }
 
-    // Download from GitHub
-    final url = '$kBaseUrl/i18n/version.json';
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode != 200) {
-      throw Exception(
+    // Try GitHub
+    try {
+      final url = '$kBaseUrl/i18n/version.json';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        await localVersionFile.writeAsString(response.body);
+        return json.decode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      // Network unavailable
+    }
+
+    // Return default - use bundled/local files
+    return {'version': '1.0.0', 'languages': {}};
+  }
         'Failed to download i18n version.json: HTTP ${response.statusCode}',
       );
     }

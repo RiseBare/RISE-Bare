@@ -55,8 +55,14 @@ jobs:
             flutter build linux --release
           elif [ "${{ matrix.platform }}" = "windows" ]; then
             flutter build windows --release
+            cd build/windows/x64/runner/Release
+            zip -r ../../../../../rise_bare_windows.zip *
+            cd ../../../..
           elif [ "${{ matrix.platform }}" = "macos" ]; then
             flutter build macos --release
+            cd build/macos/Build/Products/Release
+            zip -r ../../../../../rise_bare_macos.zip "RISE Bare.app"
+            cd ../../../..
           fi
 
       - name: Upload artifacts
@@ -66,5 +72,5 @@ jobs:
           path: |
             rise_bare/build/app/outputs/flutter-apk/app-debug.apk
             rise_bare/build/linux/x64/release/bundle/
-            rise_bare/build/windows/x64/runner/Release/
-            rise_bare/build/macos/Build/Products/Release/
+            rise_bare/rise_bare_windows.zip
+            rise_bare/rise_bare_macos.zip

@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "scripts": [
+    {
+      "name": "rise-firewall.sh",
+      "sha256": "443495788002acc818f090b0f23a7e7b9d43309b7bc81a10234492f92ecd4141",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/rise-firewall.sh"
+    },
+    {
+      "name": "rise-docker.sh",
+      "sha256": "663ca36d9f290facbeb4e455bb760fd32745c0d48bd625b4f905e18e670ca493",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/rise-docker.sh"
+    },
+    {
+      "name": "rise-update.sh",
+      "sha256": "5a32bce760273ef93f5475395d636f93ebf61f41592c7efb126f64f428280bf4",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/rise-update.sh"
+    },
+    {
+      "name": "rise-onboard.sh",
+      "sha256": "6f123df1351c125c2c8f93296e204d374ef8c4693a389c8c9b98f4b7d8629a16",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/rise-onboard.sh"
+    },
+    {
+      "name": "rise-health.sh",
+      "sha256": "3739c0a32533569c97a06e9e2b598ae2c472d34ff24c41a6f22c8bf6a5e85a72",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/rise-health.sh"
+    },
+    {
+      "name": "setup-env.sh",
+      "sha256": "71b711365b152c86a6021eebfe9ea7a993cfada857aca8a46ef64e56ff2fe8f7",
+      "url": "https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/scripts/setup-env.sh"
+    }
+  ]
+}

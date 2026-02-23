@@ -59,19 +59,6 @@ jobs:
             flutter build macos --release
           fi
 
-      - name: Package Windows
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path "rise_bare/build/windows/x64/runner/Release/*" -DestinationPath "rise_bare_windows.zip" -Force
-
-      - name: Package macOS
-        if: matrix.platform == 'macos'
-        run: |
-          cd rise_bare
-          cd build/macos/Build/Products/Release
-          zip -r ../../../../rise_bare_macos.zip "RISE Bare.app"
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -79,5 +66,5 @@ jobs:
           path: |
             rise_bare/build/app/outputs/flutter-apk/app-debug.apk
             rise_bare/build/linux/x64/release/bundle/
-            rise_bare_windows.zip
-            rise_bare_macos.zip
+            rise_bare/build/windows/x64/runner/Release/
+            rise_bare/build/macos/Build/Products/Release/

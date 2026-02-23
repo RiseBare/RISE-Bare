@@ -66,5 +66,5 @@ jobs:
           path: |
             rise_bare/build/app/outputs/flutter-apk/app-debug.apk
             rise_bare/build/linux/x64/release/bundle/
-            rise_bare/build/windows/x64/release/Release/
+            rise_bare/build/windows/x64/runner/Release/
             rise_bare/build/macos/Build/Products/Release/

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'cache_manager.dart';
 
@@ -114,33 +115,59 @@ class ScriptCache {
       // Save to cache
       await localFile.writeAsBytes(bytes);
     } catch (e) {
-      // Network error - use local file if exists
+      // Network error - try bundled asset
+      try {
+        final bytes = await rootBundle.load('assets/scripts/$scriptName');
+        final data = bytes.buffer.asUint8List();
+        await localFile.writeAsBytes(data);
+        return;
+      } catch (_) {
+        // No bundled asset either
+      }
+      
+      // Last resort: check if file exists locally
       if (!await localFile.exists()) {
         throw CacheIntegrityException('Script $scriptName unavailable: $e');
       }
     }
   }
 
-  /// Get the manifest from GitHub
+  /// Get the manifest - check local, GitHub, then bundled assets
   Future<Map<String, dynamic>> _getManifest() async {
     // First check local cache
     final localManifestFile = File('${_baseDir.path}/manifest.json');
     if (await localManifestFile.exists()) {
-      final content = await localManifestFile.readAsString();
+      try {
+        final content = await localManifestFile.readAsString();
+        return json.decode(content) as Map<String, dynamic>;
+      } catch (e) {
+        // Corrupted, continue
+      }
+    }
+
+    // Try GitHub
+    try {
+      final url = '$kBaseUrl/assets/scripts/manifest.json';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        final content = response.body;
+        await localManifestFile.writeAsString(content);
+        return json.decode(content) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      // Network unavailable
+    }
+
+    // Try bundled assets
+    try {
+      final content = await rootBundle.loadString('assets/scripts/manifest.json');
       return json.decode(content) as Map<String, dynamic>;
+    } catch (e) {
+      // No bundled manifest
     }
 
-    // Download from GitHub
-    final url = '$kBaseUrl/manifest.json';
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      // Cache the manifest locally for offline use
-      await localManifestFile.writeAsString(response.body);
-      return json.decode(response.body) as Map<String, dynamic>;
-    }
-
-    // Network unavailable - return empty manifest, use local/bundled files
-    return {'version': '0.0.0', 'scripts': [], 'i18n': {}, 'ports_db': {}};
+    // Return empty manifest
+    return {'version': '0.0.0', 'scripts': []};
   }
 
   /// Sync scripts - download only modified ones

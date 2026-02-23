@@ -49,7 +49,7 @@ dev_dependencies:
   json_serializable: any
   mockito: any
 
-# NO assets section - all files downloaded from GitHub
+# Bundled assets for offline-first
 flutter:
   uses-material-design: true
 

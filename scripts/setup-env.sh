@@ -93,7 +93,7 @@ update_scripts() {
     fi
 
     # Manifest URL - customize this for your repository
-    MANIFEST_URL="https://raw.githubusercontent.com/RiseBare/RISE-Specs/main/manifest.sha256"
+    MANIFEST_URL="https://raw.githubusercontent.com/RiseBare/RISE-Bare/master/manifest.json"
     local manifest_file="/tmp/rise-manifest.json"
 
     curl -s -f -o "$manifest_file" "$MANIFEST_URL" 2>/dev/null \

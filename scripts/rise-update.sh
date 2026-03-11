@@ -59,11 +59,95 @@ log_event() {
     logger -t "$(basename "$0")" -p user.info "$*"
 }
 
-# Dependency checks
-command -v apt-get >/dev/null 2>&1 || die ERR_DEPENDENCY "apt-get not found"
-command -v jq >/dev/null 2>&1 || die ERR_DEPENDENCY "jq not found"
-command -v fuser >/dev/null 2>&1 || die ERR_DEPENDENCY "fuser not found"
-[ "$EUID" -eq 0 ] || die ERR_PERMISSION "must be run as root"
+# Validate package name (APT format)
+validate_package_name() {
+    local pkg_name="$1"
+    
+    # APT package names: lowercase alphanumeric, +, -, ., _
+    if [[ ! "$pkg_name" =~ ^[a-z0-9][a-z0-9+.\-_]*$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid package name: $pkg_name\"}"
+        return 1
+    fi
+    
+    # Check length
+    if [ ${#pkg_name} -gt 128 ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid package name: $pkg_name (too long)\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate repository URL
+validate_repo_url() {
+    local url="$1"
+    
+    # Basic URL validation
+    if [[ ! "$url" =~ ^https?://[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid repository URL: $url\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate GPG key ID
+validate_gpg_key_id() {
+    local key_id="$1"
+    
+    # GPG key IDs are 8 or 16 hex characters, or full fingerprint
+    if [[ ! "$key_id" =~ ^[0-9A-Fa-f]{8,16}$ ]] && \
+       [[ ! "$key_id" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid GPG key ID: $key_id\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate version string
+validate_version() {
+    local version="$1"
+    
+    # Basic version validation (semver-like: major.minor.patch)
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid version string: $version\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate file path
+validate_path() {
+    local path="$1"
+    
+    # Check for empty path
+    if [ -z "$path" ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: empty path\"}"
+        return 1
+    fi
+    
+    # Check for path traversal attempts
+    if [[ "$path" == *".."* ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: path traversal not allowed\"}"
+        return 1
+    fi
+    
+    # Check for null bytes
+    if [[ "$path" == *$'\0'* ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: null bytes not allowed\"}"
+        return 1
+    fi
+    
+    # Check for dangerous characters (basic check)
+    if [[ "$path" =~ [\;\|\&\`\$\(\)] ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: dangerous characters detected\"}"
+        return 1
+    fi
+    
+    return 0
+}
 
 # APT lock check
 check_apt_lock() {
@@ -88,6 +172,61 @@ if [ "${1:-}" = "--version" ]; then
         '{status: "success", api_version: $api_version, script_version: $script_version}'
     exit 0
 fi
+
+# Feature: --upgrade-pkgs (upgrade specific packages)
+upgrade_packages() {
+    check_apt_lock
+    
+    # Get packages to upgrade from stdin or arguments
+    local packages=()
+    
+    if [ -t 0 ]; then
+        # No stdin, check arguments
+        if [ $# -eq 0 ]; then
+            die ERR_INVALID_ARGUMENTS "No packages specified"
+        fi
+        packages=("$@")
+    else
+        # Read from stdin (one package per line)
+        while IFS= read -r pkg; do
+            [ -n "$pkg" ] && packages+=("$pkg")
+        done
+    fi
+    
+    # Validate each package name
+    for pkg in "${packages[@]}"; do
+        local pkg_validation=$(validate_package_name "$pkg")
+        if [ $? -ne 0 ]; then
+            die ERR_INVALID_INPUT "$pkg_validation"
+        fi
+    done
+    
+    # Check if packages exist
+    for pkg in "${packages[@]}"; do
+        if ! apt-cache policy "$pkg" >/dev/null 2>&1; then
+            die ERR_PACKAGE_NOT_FOUND "Package not found: $pkg"
+        fi
+    done
+
+    # Actual upgrade with 180s timeout
+    export DEBIAN_FRONTEND=noninteractive
+
+    if ! timeout 180 apt-get install -y -qq "${packages[@]}" 2>&1; then
+        die ERR_OPERATION_FAILED "Package upgrade failed"
+    fi
+
+    log_event "Packages upgraded: ${packages[*]}"
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --argjson packages "$(echo "${packages[@]}" | jq -R -s 'split(" ")')" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            message: "Packages upgraded successfully",
+            packages: $packages
+        }'
+}
 
 # Feature: --check
 check_updates() {
@@ -226,6 +365,10 @@ case "${1:-}" in
     --upgrade)
         upgrade_system
         ;;
+    --upgrade-pkgs)
+        shift
+        upgrade_packages "$@"
+        ;;
     --version)
         jq -n \
             --arg api_version "$API_VERSION" \
@@ -233,6 +376,6 @@ case "${1:-}" in
             '{status: "success", api_version: $api_version, script_version: $script_version}'
         ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--check|--upgrade|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--check|--upgrade|--upgrade-pkgs <pkg1> [pkg2...]|--version}"
         ;;
 esac

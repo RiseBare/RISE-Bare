@@ -59,8 +59,119 @@ log_event() {
     logger -t "$(basename "$0")" -p user.info "$*"
 }
 
-# Dependency checks
-command -v jq >/dev/null 2>&1 || die ERR_DEPENDENCY "jq not installed" 2
+# Validate port number (1-65535)
+validate_port() {
+    local port="$1"
+    
+    # Check if it's a valid number
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid port: $port (must be a number)\"}"
+        return 1
+    fi
+    
+    # Check range
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid port: $port (must be 1-65535)\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate container ID format
+validate_container_id() {
+    local container_id="$1"
+    
+    # Container IDs can be:
+    # - Full 64-character hex string
+    # - Shortened unique prefix (alphanumeric, dots, hyphens, underscores)
+    if [[ ! "$container_id" =~ ^[a-fA-F0-9]{64}$ ]] && \
+       [[ ! "$container_id" =~ ^[a-zA-Z0-9_.\-]{1,128}$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid container ID format: $container_id\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate file path
+validate_path() {
+    local path="$1"
+    
+    # Check for empty path
+    if [ -z "$path" ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: empty path\"}"
+        return 1
+    fi
+    
+    # Check for path traversal attempts
+    if [[ "$path" == *".."* ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: path traversal not allowed\"}"
+        return 1
+    fi
+    
+    # Check for null bytes
+    if [[ "$path" == *$'\0'* ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: null bytes not allowed\"}"
+        return 1
+    fi
+    
+    # Check for dangerous characters (basic check)
+    if [[ "$path" =~ [\;\|\&\`\$\(\)] ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid path: dangerous characters detected\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate container name (alphanumeric, dots, hyphens, underscores, 1-128 chars)
+validate_container_name() {
+    local name="$1"
+    
+    if [ ${#name} -lt 1 ] || [ ${#name} -gt 128 ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid container name: $name (must be 1-128 characters)\"}"
+        return 1
+    fi
+    
+    if [[ ! "$name" =~ ^[a-zA-Z0-9_.\-]+$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid container name: $name (must be alphanumeric, dots, hyphens, underscores)\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate image name
+validate_image_name() {
+    local image="$1"
+    
+    # Basic image name validation (repo/image:tag or image:tag)
+    if [[ ! "$image" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*(:[a-zA-Z0-9._-]+)?$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid image name: $image\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Check if Docker daemon is running
+check_docker_daemon() {
+    if ! docker info >/dev/null 2>&1; then
+        die ERR_DOCKER_DAEMON "Docker daemon is not running"
+    fi
+}
+
+# Check if container exists
+container_exists() {
+    local container_id="$1"
+    
+    if ! docker inspect "$container_id" >/dev/null 2>&1; then
+        return 1
+    fi
+    
+    return 0
+}
 
 # Check if Docker is installed
 if ! command -v docker >/dev/null 2>&1; then
@@ -146,14 +257,14 @@ list_containers() {
         '{status: "success", api_version: $api_version, data: $data}'
 }
 
-# Feature: --start, --stop, --restart
-container_action() {
-    local action="$1"
-    local container_id="$2"
+# Feature: --update (pull latest image and restart)
+update_container() {
+    local container_id="$1"
 
-    # Validate container ID format (alphanumeric, dots, hyphens, underscores only)
-    if ! [[ "$container_id" =~ ^[a-zA-Z0-9_.\-]{1,128}$ ]]; then
-        die ERR_INVALID_INPUT "Invalid container ID format: $container_id"
+    # Validate container ID format
+    local id_validation=$(validate_container_id "$container_id")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_INPUT "$id_validation"
     fi
 
     # Verify container exists
@@ -161,17 +272,60 @@ container_action() {
         die ERR_CONTAINER_NOT_FOUND "Container not found: $container_id"
     fi
 
-    # Execute action
-    if ! docker "$action" "$container_id" >/dev/null 2>&1; then
-        die ERR_DOCKER_COMMAND "docker $action $container_id failed"
+    # Get container image
+    local image=$(docker inspect --format='{{.Config.Image}}' "$container_id" 2>/dev/null)
+    
+    # Pull latest image
+    if ! docker pull "$image" >/dev/null 2>&1; then
+        die ERR_DOCKER_COMMAND "Failed to pull latest image: $image"
     fi
 
-    log_event "Docker ${action}: ${container_id}"
+    # Restart container
+    if ! docker restart "$container_id" >/dev/null 2>&1; then
+        die ERR_DOCKER_COMMAND "Failed to restart container: $container_id"
+    fi
+
+    log_event "Docker update: ${container_id} (image: ${image})"
 
     jq -n \
         --arg api_version "$API_VERSION" \
-        --arg action "$action" \
-        '{status: "success", api_version: $api_version, message: ("Container " + $action + " successful")}'
+        --arg container "$container_id" \
+        --arg image "$image" \
+        '{status: "success", api_version: $api_version, message: ("Container updated with image: " + $image)}'
+}
+
+# Feature: --logs (get container logs)
+get_logs() {
+    local container_id="$1"
+    local tail="${2:-100}"  # Default to last 100 lines
+
+    # Validate container ID format
+    local id_validation=$(validate_container_id "$container_id")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_INPUT "$id_validation"
+    fi
+
+    # Verify container exists
+    if ! docker inspect "$container_id" >/dev/null 2>&1; then
+        die ERR_CONTAINER_NOT_FOUND "Container not found: $container_id"
+    fi
+
+    # Validate tail parameter
+    if ! [[ "$tail" =~ ^[0-9]+$ ]] || [ "$tail" -lt 1 ]; then
+        die ERR_INVALID_INPUT "Invalid tail value: $tail (must be a positive number)"
+    fi
+
+    # Get logs
+    local logs=$(docker logs --tail "$tail" "$container_id" 2>&1)
+    
+    # Escape special characters for JSON
+    logs=$(echo "$logs" | jq -Rs '.')
+
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg container "$container_id" \
+        --argjson logs "$logs" \
+        '{status: "success", api_version: $api_version, container: $container, logs: $logs}'
 }
 
 # Main entry point
@@ -186,6 +340,14 @@ case "${1:-}" in
         [ -n "${2:-}" ] || die ERR_INVALID_ARGUMENTS "Missing container ID"
         container_action "${1#--}" "$2"
         ;;
+    --update)
+        [ -n "${2:-}" ] || die ERR_INVALID_ARGUMENTS "Missing container ID"
+        update_container "$2"
+        ;;
+    --logs)
+        [ -n "${2:-}" ] || die ERR_INVALID_ARGUMENTS "Missing container ID"
+        get_logs "$2" "${3:-100}"
+        ;;
     --version)
         jq -n \
             --arg api_version "$API_VERSION" \
@@ -193,6 +355,6 @@ case "${1:-}" in
             '{status: "success", api_version: $api_version, script_version: $script_version}'
         ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--status|--list|--start|--stop|--restart <id>|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--status|--list|--start|--stop|--restart|--update|--logs <id> [tail]|--version}"
         ;;
 esac

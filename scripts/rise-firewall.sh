@@ -81,30 +81,131 @@ if [ "${1:-}" = "--version" ]; then
     exit 0
 fi
 
-# Validate CIDR format (IPv4 only)
+# Validate port number (1-65535)
+validate_port() {
+    local port="$1"
+    
+    # Check if it's a valid number
+    if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid port: $port (must be a number)\"}"
+        return 1
+    fi
+    
+    # Check range
+    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid port: $port (must be 1-65535)\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate IPv4 address
+validate_ipv4() {
+    local ip="$1"
+    
+    # Must match x.x.x.x pattern
+    if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid IPv4 address: $ip\"}"
+        return 1
+    fi
+    
+    # Validate each octet (0-255)
+    IFS='.' read -r -a octets <<< "$ip"
+    for octet in "${octets[@]}"; do
+        if [ "$octet" -gt 255 ]; then
+            echo "{\"status\": \"error\", \"message\": \"Invalid IPv4 address: $ip (octet out of range)\"}"
+            return 1
+        fi
+    done
+    
+    return 0
+}
+
+# Validate IPv6 address (simplified - basic format check)
+validate_ipv6() {
+    local ip="$1"
+    
+    # Basic IPv6 pattern (not comprehensive, but catches common cases)
+    if [[ ! "$ip" =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]] && \
+       [[ ! "$ip" =~ ^::1$ ]] && \
+       [[ ! "$ip" =~ ^::$ ]] && \
+       [[ ! "$ip" =~ ^[0-9a-fA-F]*:[0-9a-fA-F]*:[0-9a-fA-F:]*$ ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid IPv6 address: $ip\"}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate IP address (IPv4 or IPv6)
+validate_ip() {
+    local ip="$1"
+    
+    if [[ "$ip" == *":"* ]]; then
+        validate_ipv6 "$ip" || return 1
+    else
+        validate_ipv4 "$ip" || return 1
+    fi
+    
+    return 0
+}
+
+# Validate CIDR notation (IPv4 or IPv6)
 validate_cidr() {
     local cidr="$1"
+    
+    # Check for IPv6 CIDR
+    if [[ "$cidr" == *":"* ]]; then
+        # IPv6 CIDR format: address/prefix
+        if [[ ! "$cidr" =~ ^[0-9a-fA-F:]+/[0-9]{1,3}$ ]]; then
+            echo "{\"status\": \"error\", \"message\": \"Invalid IPv6 CIDR: $cidr\"}"
+            return 1
+        fi
+        
+        local prefix="${cidr##*/}"
+        if [ "$prefix" -gt 128 ]; then
+            echo "{\"status\": \"error\", \"message\": \"Invalid IPv6 CIDR prefix: $prefix (must be 0-128)\"}"
+            return 1
+        fi
+        
+        return 0
+    else
+        # IPv4 CIDR format: x.x.x.x/nn
+        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            echo "{\"status\": \"error\", \"message\": \"Invalid IPv4 CIDR: $cidr\"}"
+            return 1
+        fi
+        
+        # Validate each octet (0-255)
+        IFS='.' read -r -a octets <<< "${cidr%/*}"
+        for octet in "${octets[@]}"; do
+            if [ "$octet" -gt 255 ]; then
+                echo "{\"status\": \"error\", \"message\": \"Invalid IPv4 CIDR: $cidr (octet out of range)\"}"
+                return 1
+            fi
+        done
+        
+        # Validate prefix length (0-32)
+        local prefix="${cidr#*/}"
+        if [ "$prefix" -gt 32 ]; then
+            echo "{\"status\": \"error\", \"message\": \"Invalid IPv4 CIDR prefix: $prefix (must be 0-32)\"}"
+            return 1
+        fi
+        
+        return 0
+    fi
+}
 
-    # Reject IPv6 immediately (contains ":")
-    if [[ "$cidr" == *:* ]]; then
+# Validate protocol (tcp or udp)
+validate_protocol() {
+    local protocol="$1"
+    
+    if [[ "$protocol" != "tcp" && "$protocol" != "udp" ]]; then
+        echo "{\"status\": \"error\", \"message\": \"Invalid protocol: $protocol (must be tcp or udp)\"}"
         return 1
     fi
-
-    # Must match x.x.x.x/nn pattern
-    if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        return 1
-    fi
-
-    # Validate each octet (0-255)
-    IFS='.' read -r -a octets <<< "${cidr%/*}"
-    for octet in "${octets[@]}"; do
-        [ "$octet" -le 255 ] || return 1
-    done
-
-    # Validate prefix length (0-32)
-    local prefix="${cidr#*/}"
-    [ "$prefix" -le 32 ] || return 1
-
+    
     return 0
 }
 
@@ -140,6 +241,12 @@ scan_ports() {
         local proto=$(echo "$line" | awk '{print $1}')
         local local_addr=$(echo "$line" | awk '{print $5}')
 
+        # Validate protocol
+        local proto_validation=$(validate_protocol "$proto")
+        if [ $? -ne 0 ]; then
+            continue
+        fi
+
         # V5.9: Robust parsing for IPv4 and IPv6
         local port=""
         local listen_ip=""
@@ -161,7 +268,8 @@ scan_ports() {
         fi
 
         # Validate that port is a valid number
-        if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        local port_validation=$(validate_port "$port")
+        if [ $? -ne 0 ]; then
             continue
         fi
 
@@ -213,25 +321,36 @@ apply_rules() {
     echo "$rules_json" | jq -e . >/dev/null 2>&1 || die ERR_INVALID_INPUT "Malformed JSON payload"
 
     # Validate all rules structure with jq
-    jq -e '
-        if type != "array" then error("Payload must be array") else . end |
-        .[] |
-        if (.port | type) != "number" or .port < 1 or .port > 65535
-            then error("Port out of range") else . end |
-        if .proto != "tcp" and .proto != "udp"
-            then error("proto must be tcp or udp") else . end |
-        if .action != "allow" and .action != "drop"
-            then error("action must be allow or drop") else . end
-    ' <<< "$rules_json" >/dev/null 2>&1 \
-        || die ERR_INVALID_RULE "Rule validation failed (port/proto/action)"
-
-    # Validate CIDR fields
     while IFS= read -r rule; do
-        cidr=$(jq -r '.cidr // empty' <<< "$rule")
-        if [ -n "$cidr" ] && ! validate_cidr "$cidr"; then
-            die ERR_INVALID_RULE "Invalid CIDR: $cidr (IPv4 only, format x.x.x.x/nn)"
+        # Validate port
+        local port=$(jq -r '.port' <<< "$rule")
+        local port_validation=$(validate_port "$port")
+        if [ $? -ne 0 ]; then
+            die ERR_INVALID_RULE "$port_validation"
         fi
-    done < <(jq -c '.[]' <<< "$rules")
+
+        # Validate protocol
+        local proto=$(jq -r '.proto' <<< "$rule")
+        local proto_validation=$(validate_protocol "$proto")
+        if [ $? -ne 0 ]; then
+            die ERR_INVALID_RULE "$proto_validation"
+        fi
+
+        # Validate action
+        local action=$(jq -r '.action' <<< "$rule")
+        if [[ "$action" != "allow" && "$action" != "drop" ]]; then
+            die ERR_INVALID_RULE "Invalid action: $action (must be allow or drop)"
+        fi
+
+        # Validate CIDR if present
+        local cidr=$(jq -r '.cidr // empty' <<< "$rule")
+        if [ -n "$cidr" ]; then
+            local cidr_validation=$(validate_cidr "$cidr")
+            if [ $? -ne 0 ]; then
+                die ERR_INVALID_RULE "$cidr_validation"
+            fi
+        fi
+    done < <(jq -c '.[]' <<< "$rules_json")
 
     # 4. Build complete nftables ruleset file
     cat > "$TMPFILE" << 'EOF'
@@ -490,21 +609,33 @@ add_rule() {
     
     echo "$rule_json" | jq -e . >/dev/null 2>&1 || die ERR_INVALID_INPUT "Malformed JSON payload"
 
-    # Validate rule structure
-    jq -e '
-        if (.port | type) != "number" or .port < 1 or .port > 65535
-            then error("Port out of range") else . end |
-        if .proto != "tcp" and .proto != "udp"
-            then error("proto must be tcp or udp") else . end |
-        if .action != "allow" and .action != "drop"
-            then error("action must be allow or drop") else . end
-    ' <<< "$rule_json" >/dev/null 2>&1 \
-        || die ERR_INVALID_RULE "Rule validation failed"
+    # Validate port
+    local port=$(jq -r '.port' <<< "$rule_json")
+    local port_validation=$(validate_port "$port")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$port_validation"
+    fi
+
+    # Validate protocol
+    local proto=$(jq -r '.proto' <<< "$rule_json")
+    local proto_validation=$(validate_protocol "$proto")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$proto_validation"
+    fi
+
+    # Validate action
+    local action=$(jq -r '.action' <<< "$rule_json")
+    if [[ "$action" != "allow" && "$action" != "drop" ]]; then
+        die ERR_INVALID_RULE "Invalid action: $action (must be allow or drop)"
+    fi
 
     # Validate CIDR if present
     local cidr=$(jq -r '.cidr // empty' <<< "$rule_json")
-    if [ -n "$cidr" ] && ! validate_cidr "$cidr"; then
-        die ERR_INVALID_RULE "Invalid CIDR: $cidr (IPv4 only, format x.x.x.x/nn)"
+    if [ -n "$cidr" ]; then
+        local cidr_validation=$(validate_cidr "$cidr")
+        if [ $? -ne 0 ]; then
+            die ERR_INVALID_RULE "$cidr_validation"
+        fi
     fi
 
     # Get current rules and backup
@@ -620,20 +751,29 @@ edit_rule() {
     local new_action=$(echo "$rules_json" | jq -r '.new.action')
     local new_cidr=$(echo "$rules_json" | jq -r '.new.cidr // empty')
 
-    # Validate new rule
-    jq -e '
-        if (.new.port | type) != "number" or .new.port < 1 or .new.port > 65535
-            then error("Port out of range") else . end |
-        if .new.proto != "tcp" and .new.proto != "udp"
-            then error("proto must be tcp or udp") else . end |
-        if .new.action != "allow" and .new.action != "drop"
-            then error("action must be allow or drop") else . end
-    ' <<< "$rules_json" >/dev/null 2>&1 \
-        || die ERR_INVALID_RULE "New rule validation failed"
+    # Validate new port
+    local port_validation=$(validate_port "$new_port")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$port_validation"
+    fi
+
+    # Validate new protocol
+    local proto_validation=$(validate_protocol "$new_proto")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$proto_validation"
+    fi
+
+    # Validate new action
+    if [[ "$new_action" != "allow" && "$new_action" != "drop" ]]; then
+        die ERR_INVALID_RULE "Invalid action: $new_action (must be allow or drop)"
+    fi
 
     # Validate CIDR if present
-    if [ -n "$new_cidr" ] && ! validate_cidr "$new_cidr"; then
-        die ERR_INVALID_RULE "Invalid CIDR: $new_cidr (IPv4 only, format x.x.x.x/nn)"
+    if [ -n "$new_cidr" ]; then
+        local cidr_validation=$(validate_cidr "$new_cidr")
+        if [ $? -ne 0 ]; then
+            die ERR_INVALID_RULE "$cidr_validation"
+        fi
     fi
 
     # Get current rules and backup
@@ -737,14 +877,19 @@ delete_rule() {
     
     echo "$rule_json" | jq -e . >/dev/null 2>&1 || die ERR_INVALID_INPUT "Malformed JSON payload"
 
-    # Validate rule structure
-    jq -e '
-        if (.port | type) != "number" or .port < 1 or .port > 65535
-            then error("Port out of range") else . end |
-        if .proto != "tcp" and .proto != "udp"
-            then error("proto must be tcp or udp") else . end
-    ' <<< "$rule_json" >/dev/null 2>&1 \
-        || die ERR_INVALID_RULE "Rule validation failed"
+    # Validate port
+    local port=$(jq -r '.port' <<< "$rule_json")
+    local port_validation=$(validate_port "$port")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$port_validation"
+    fi
+
+    # Validate protocol
+    local proto=$(jq -r '.proto' <<< "$rule_json")
+    local proto_validation=$(validate_protocol "$proto")
+    if [ $? -ne 0 ]; then
+        die ERR_INVALID_RULE "$proto_validation"
+    fi
 
     local port=$(jq -r '.port' <<< "$rule_json")
     local proto=$(jq -r '.proto' <<< "$rule_json")

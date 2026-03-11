@@ -1,15 +1,16 @@
 #!/bin/bash
 # Script: rise-firewall.sh
-# Version: 2.0.0
+# Version: 2.1.0
 # Description: RISE Firewall Management - atomic rule application with automatic rollback
 #              Fixed: SSH injection vulnerabilities, implemented actual CRUD operations
 #              Added: Rate limiting for firewall operations
+#              Optimized: nftables queries with caching and batch mode
 
 set -Eeuo pipefail
 
 # API version (major.minor) - must match client expectation
-readonly API_VERSION="2.0"
-readonly SCRIPT_VERSION="2.0.0"
+readonly API_VERSION="2.1"
+readonly SCRIPT_VERSION="2.1.0"
 
 # Rate limiting configuration
 readonly RATE_LIMIT_APPLY=10        # Max apply calls per hour
@@ -20,6 +21,11 @@ readonly RATE_LIMIT_WINDOW=3600     # Time window in seconds (1 hour)
 readonly RATE_LIMIT_DIR="/var/lib/rise"
 readonly RATE_LIMIT_APPLY_FILE="$RATE_LIMIT_DIR/apply-rate.log"
 readonly RATE_LIMIT_RULES_FILE="$RATE_LIMIT_DIR/rules-rate.log"
+
+# Cache configuration
+readonly CACHE_DIR="/var/lib/rise"
+readonly CACHE_FILE="$CACHE_DIR/firewall_cache.json"
+readonly CACHE_TTL=60               # Cache TTL in seconds
 
 # Locale enforcement (prevent localized command output)
 export LANG=C
@@ -91,6 +97,14 @@ init_rate_limit_dir() {
     fi
 }
 
+# Initialize cache directory
+init_cache_dir() {
+    if [ ! -d "$CACHE_DIR" ]; then
+        mkdir -p "$CACHE_DIR"
+        chmod 700 "$CACHE_DIR"
+    fi
+}
+
 # Clean old entries from rate limit log (older than RATE_LIMIT_WINDOW)
 clean_old_entries() {
     local log_file="$1"
@@ -153,6 +167,75 @@ check_rate_limit() {
     # Record this operation
     echo "$(date +%s)" >> "$log_file"
     return 0
+}
+
+# Check if cache is valid (not expired)
+# Args: $1 = cache file path, $2 = TTL in seconds
+is_cache_valid() {
+    local cache_file="$1"
+    local ttl="$2"
+    
+    if [ ! -f "$cache_file" ]; then
+        return 1
+    fi
+    
+    local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo "0")))
+    if [ "$cache_age" -gt "$ttl" ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Refresh cache for nftables rules
+refresh_cache() {
+    init_cache_dir
+    
+    # Get nftables rules as JSON using batch mode
+    local nft_output
+    local nft_exit
+    
+    nft_output=$(nft -j -c list chain inet rise_filter input 2>&1)
+    nft_exit=$?
+    
+    # Validate nftables output
+    if [ $nft_exit -ne 0 ]; then
+        if [[ "$nft_output" =~ "No such file or directory" ]] || [[ "$nft_output" =~ "does not exist" ]]; then
+            nft_output='{}'
+        else
+            die ERR_OPERATION_FAILED "nftables error: ${nft_output}"
+        fi
+    fi
+    
+    # Validate JSON structure
+    if ! echo "$nft_output" | jq empty 2>/dev/null; then
+        die ERR_OPERATION_FAILED "nftables returned invalid JSON"
+    fi
+    
+    # Write cache with metadata
+    jq -n \
+        --argjson data "$nft_output" \
+        --argjson timestamp "$(date +%s)" \
+        --arg ttl "$CACHE_TTL" \
+        '{
+            data: $data,
+            timestamp: $timestamp,
+            ttl: $ttl,
+            valid: true
+        }' > "$CACHE_FILE"
+    
+    chmod 600 "$CACHE_FILE"
+    log_event "Firewall cache refreshed"
+}
+
+# Get cached rules if valid
+# Returns: cached rules JSON or empty string
+get_cached_rules() {
+    if is_cache_valid "$CACHE_FILE" "$CACHE_TTL"; then
+        cat "$CACHE_FILE" | jq -r '.data'
+    else
+        echo ""
+    fi
 }
 
 # Version flag
@@ -621,67 +704,121 @@ flush_rules() {
         }'
 }
 
-# Feature: --list-rules
+# Feature: --list-rules with caching
 list_rules() {
-    # Get nftables rules as JSON
-    local nft_output
-    local nft_exit
-
-    nft_output=$(nft -j list chain inet rise_filter input 2>&1)
-    nft_exit=$?
-
-    # Validate nftables output
-    if [ $nft_exit -ne 0 ]; then
-        if [[ "$nft_output" =~ "No such file or directory" ]] || [[ "$nft_output" =~ "does not exist" ]] || [[ "$nft_output" =~ "Error:" ]]; then
-            nft_output='{}'
-        else
-            die ERR_OPERATION_FAILED "nftables error: ${nft_output}"
+    # Check if cache is valid
+    if is_cache_valid "$CACHE_FILE" "$CACHE_TTL"; then
+        # Return cached rules
+        local cached_data=$(cat "$CACHE_FILE" | jq -r '.data')
+        
+        # Parse rules from cached data
+        local rules_json="[]"
+        
+        # Extract rules from nft JSON output
+        local rules=$(echo "$cached_data" | jq -r '.nftables[]? | select(.rule?) | .rule' 2>/dev/null)
+        
+        if [ -n "$rules" ]; then
+            echo "$rules" | while IFS= read -r rule; do
+                # Extract port from expr
+                local port=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.right // empty' 2>/dev/null)
+                
+                # Extract protocol
+                local proto=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.left.payload.protocol // empty' 2>/dev/null)
+                
+                # Extract source IP if present
+                local src_ip=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | select(.match.left.payload.type == "ipv4_address") | .match.right // empty' 2>/dev/null)
+                
+                # Extract action
+                local action=$(echo "$rule" | jq -r '.expr[]? | select(.accept? or .drop?) | if .accept then "accept" elif .drop then "drop" else "unknown" end' 2>/dev/null)
+                
+                # Build rule JSON
+                local rule_json=$(jq -n \
+                    --argjson port "$port" \
+                    --arg proto "$proto" \
+                    --arg src_ip "$src_ip" \
+                    --arg action "$action" \
+                    '{port: $port, protocol: $proto, sourceIp: ($src_ip | if . == "" then null else . end), action: $action}')
+                
+                rules_json=$(echo "$rules_json" | jq --argjson obj "$rule_json" '. += [$obj]')
+            done
         fi
-    fi
 
-    # Validate JSON structure
-    if ! echo "$nft_output" | jq empty 2>/dev/null; then
-        die ERR_OPERATION_FAILED "nftables returned invalid JSON"
-    fi
+        # Output final JSON with cache metadata
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            --argjson data "$rules_json" \
+            --arg cached "true" \
+            '{status: "success", api_version: $api_version, data: $data, cached: ($cached == "true")}'
+    else
+        # Cache is invalid, refresh it
+        refresh_cache
+        
+        # Get fresh rules
+        local nft_output
+        local nft_exit
 
-    # Parse rules and convert to JSON array
-    local rules_json="[]"
-    
-    # Extract rules from nft JSON output
-    local rules=$(echo "$nft_output" | jq -r '.nftables[]? | select(.rule?) | .rule' 2>/dev/null)
-    
-    if [ -n "$rules" ]; then
-        # Process each rule
-        echo "$rules" | while IFS= read -r rule; do
-            # Extract port from expr
-            local port=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.right // empty' 2>/dev/null)
-            
-            # Extract protocol
-            local proto=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.left.payload.protocol // empty' 2>/dev/null)
-            
-            # Extract source IP if present
-            local src_ip=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | select(.match.left.payload.type == "ipv4_address") | .match.right // empty' 2>/dev/null)
-            
-            # Extract action
-            local action=$(echo "$rule" | jq -r '.expr[]? | select(.accept? or .drop?) | if .accept then "accept" elif .drop then "drop" else "unknown" end' 2>/dev/null)
-            
-            # Build rule JSON
-            local rule_json=$(jq -n \
-                --argjson port "$port" \
-                --arg proto "$proto" \
-                --arg src_ip "$src_ip" \
-                --arg action "$action" \
-                '{port: $port, protocol: $proto, sourceIp: ($src_ip | if . == "" then null else . end), action: $action}')
-            
-            rules_json=$(echo "$rules_json" | jq --argjson obj "$rule_json" '. += [$obj]')
-        done
-    fi
+        nft_output=$(nft -j list chain inet rise_filter input 2>&1)
+        nft_exit=$?
 
-    # Output final JSON
-    jq -n \
-        --arg api_version "$API_VERSION" \
-        --argjson data "$rules_json" \
-        '{status: "success", api_version: $api_version, data: $data}'
+        # Validate nftables output
+        if [ $nft_exit -ne 0 ]; then
+            if [[ "$nft_output" =~ "No such file or directory" ]] || [[ "$nft_output" =~ "does not exist" ]] || [[ "$nft_output" =~ "Error:" ]]; then
+                nft_output='{}'
+            else
+                die ERR_OPERATION_FAILED "nftables error: ${nft_output}"
+            fi
+        fi
+
+        # Validate JSON structure
+        if ! echo "$nft_output" | jq empty 2>/dev/null; then
+            die ERR_OPERATION_FAILED "nftables returned invalid JSON"
+        fi
+
+        # Parse rules and convert to JSON array
+        local rules_json="[]"
+        
+        # Extract rules from nft JSON output
+        local rules=$(echo "$nft_output" | jq -r '.nftables[]? | select(.rule?) | .rule' 2>/dev/null)
+        
+        if [ -n "$rules" ]; then
+            echo "$rules" | while IFS= read -r rule; do
+                # Extract port from expr
+                local port=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.right // empty' 2>/dev/null)
+                
+                # Extract protocol
+                local proto=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | .match.left.payload.protocol // empty' 2>/dev/null)
+                
+                # Extract source IP if present
+                local src_ip=$(echo "$rule" | jq -r '.expr[]? | select(.match?) | select(.match.left.payload.type == "ipv4_address") | .match.right // empty' 2>/dev/null)
+                
+                # Extract action
+                local action=$(echo "$rule" | jq -r '.expr[]? | select(.accept? or .drop?) | if .accept then "accept" elif .drop then "drop" else "unknown" end' 2>/dev/null)
+                
+                # Build rule JSON
+                local rule_json=$(jq -n \
+                    --argjson port "$port" \
+                    --arg proto "$proto" \
+                    --arg src_ip "$src_ip" \
+                    --arg action "$action" \
+                    '{port: $port, protocol: $proto, sourceIp: ($src_ip | if . == "" then null else . end), action: $action}')
+                
+                rules_json=$(echo "$rules_json" | jq --argjson obj "$rule_json" '. += [$obj]')
+            done
+        fi
+
+        # Output final JSON
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            --argjson data "$rules_json" \
+            '{status: "success", api_version: $api_version, data: $data}'
+    fi
+}
+
+# Feature: --refresh-cache
+refresh_cache_cmd() {
+    init_cache_dir
+    refresh_cache
+    echo "{\"status\": \"success\", \"message\": \"Cache refreshed successfully\"}"
 }
 
 # Feature: --add-rule with base64 support and actual nftables modification
@@ -1095,6 +1232,9 @@ case "${1:-}" in
     --list-rules)
         list_rules
         ;;
+    --refresh-cache)
+        refresh_cache_cmd
+        ;;
     --add-rule)
         add_rule "$@"
         ;;
@@ -1104,7 +1244,13 @@ case "${1:-}" in
     --delete-rule)
         delete_rule "$@"
         ;;
+    --version)
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            --arg script_version "$SCRIPT_VERSION" \
+            '{status: "success", api_version: $api_version, script_version: $script_version}'
+        ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--scan|--apply|--confirm|--rollback|--flush|--list-rules|--add-rule|--edit-rule|--delete-rule|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--scan|--apply|--confirm|--rollback|--flush|--list-rules|--refresh-cache|--add-rule|--edit-rule|--delete-rule|--version}"
         ;;
 esac

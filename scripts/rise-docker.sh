@@ -1,15 +1,21 @@
 #!/bin/bash
 # Script: rise-docker.sh
-# Version: 1.0.0
+# Version: 1.1.0
 # Description: RISE Docker Management - container lifecycle control
+#              Optimized: container list caching and JSON format parsing
 
 set -Eeuo pipefail
 
-readonly API_VERSION="1.0"
-readonly SCRIPT_VERSION="1.0.0"
+readonly API_VERSION="1.1"
+readonly SCRIPT_VERSION="1.1.0"
 
 export LANG=C
 export LC_ALL=C
+
+# Cache configuration
+readonly CACHE_DIR="/var/lib/rise"
+readonly CONTAINER_CACHE="$CACHE_DIR/container_cache.json"
+readonly CONTAINER_CACHE_TTL=30  # Cache TTL in seconds
 
 # flock on FD 200 - prevents concurrent operations
 exec 200>/var/lock/rise-operation.lock
@@ -173,6 +179,74 @@ container_exists() {
     return 0
 }
 
+# Initialize cache directory
+init_cache_dir() {
+    if [ ! -d "$CACHE_DIR" ]; then
+        mkdir -p "$CACHE_DIR"
+        chmod 700 "$CACHE_DIR"
+    fi
+}
+
+# Check if container cache is valid
+is_container_cache_valid() {
+    if [ ! -f "$CONTAINER_CACHE" ]; then
+        return 1
+    fi
+    
+    local cache_age=$(($(date +%s) - $(stat -c %Y "$CONTAINER_CACHE" 2>/dev/null || echo "0")))
+    if [ "$cache_age" -gt "$CONTAINER_CACHE_TTL" ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Refresh container cache using JSON format for faster parsing
+refresh_container_cache() {
+    init_cache_dir
+    
+    # Use docker ps --format json for faster parsing
+    local containers_json
+    containers_json=$(docker ps -a --format '{{json .}}' 2>/dev/null || echo "[]")
+    
+    # Parse containers with jq (sanitizes all fields automatically)
+    local containers_parsed
+    containers_parsed=$(echo "$containers_json" | jq -c '
+        [.[] | {
+            id: .Id[:12],
+            name: (.Name | ltrimstr("/")),
+            state: .State.Status,
+            status_text: .State.Status,
+            image: .Config.Image,
+            compose_path: (.Config.Labels["com.docker.compose.project.working_dir"] // null)
+        }]
+    ' 2>/dev/null || echo "[]")
+    
+    # Write cache with metadata
+    jq -n \
+        --argjson data "$containers_parsed" \
+        --argjson timestamp "$(date +%s)" \
+        --arg ttl "$CONTAINER_CACHE_TTL" \
+        '{
+            data: $data,
+            timestamp: $timestamp,
+            ttl: $ttl,
+            valid: true
+        }' > "$CONTAINER_CACHE"
+    
+    chmod 600 "$CONTAINER_CACHE"
+    log_event "Container cache refreshed"
+}
+
+# Get cached container list if valid
+get_cached_containers() {
+    if is_container_cache_valid; then
+        cat "$CONTAINER_CACHE" | jq -r '.data'
+    else
+        echo ""
+    fi
+}
+
 # Check if Docker is installed
 if ! command -v docker >/dev/null 2>&1; then
     jq -n \
@@ -220,41 +294,56 @@ status_docker() {
         }'
 }
 
-# Feature: --list
+# Feature: --list with caching
 list_containers() {
-    # Check if any containers exist
-    local container_ids
-    container_ids=$(docker ps -aq 2>/dev/null || true)
-
-    if [ -z "$container_ids" ]; then
+    # Check if cache is valid
+    if is_container_cache_valid; then
+        # Return cached containers
+        local cached_data=$(get_cached_containers)
+        
         jq -n \
             --arg api_version "$API_VERSION" \
-            '{status: "success", api_version: $api_version, data: []}'
-        exit 0
+            --argjson data "$cached_data" \
+            --arg cached "true" \
+            '{status: "success", api_version: $api_version, data: $data, cached: ($cached == "true")}'
+    else
+        # Cache is invalid, refresh it
+        refresh_container_cache
+        
+        # Get fresh container list
+        local container_ids
+        container_ids=$(docker ps -aq 2>/dev/null || true)
+
+        if [ -z "$container_ids" ]; then
+            jq -n \
+                --arg api_version "$API_VERSION" \
+                '{status: "success", api_version: $api_version, data: []}'
+            exit 0
+        fi
+
+        # Get full container details via docker inspect
+        local containers_raw
+        containers_raw=$(echo "$container_ids" | xargs -r docker inspect 2>/dev/null | jq -s 'add // []' || echo '[]')
+
+        # Parse containers with jq (sanitizes all fields automatically)
+        local containers_json
+        containers_json=$(echo "$containers_raw" | jq -c '
+            [.[] | {
+                id: .Id[:12],
+                name: (.Name | ltrimstr("/")),
+                state: .State.Status,
+                status_text: .State.Status,
+                image: .Config.Image,
+                compose_path: (.Config.Labels["com.docker.compose.project.working_dir"] // null)
+            }]
+        ')
+
+        # Output final JSON
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            --argjson data "$containers_json" \
+            '{status: "success", api_version: $api_version, data: $data}'
     fi
-
-    # Get full container details via docker inspect
-    local containers_raw
-    containers_raw=$(echo "$container_ids" | xargs -r docker inspect 2>/dev/null | jq -s 'add // []' || echo '[]')
-
-    # Parse containers with jq (sanitizes all fields automatically)
-    local containers_json
-    containers_json=$(echo "$containers_raw" | jq -c '
-        [.[] | {
-            id: .Id[:12],
-            name: (.Name | ltrimstr("/")),
-            state: .State.Status,
-            status_text: .State.Status,
-            image: .Config.Image,
-            compose_path: (.Config.Labels["com.docker.compose.project.working_dir"] // null)
-        }]
-    ')
-
-    # Output final JSON
-    jq -n \
-        --arg api_version "$API_VERSION" \
-        --argjson data "$containers_json" \
-        '{status: "success", api_version: $api_version, data: $data}'
 }
 
 # Feature: --update (pull latest image and restart)

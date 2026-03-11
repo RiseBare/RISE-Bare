@@ -15,6 +15,8 @@ readonly CONFIG_DIR="/etc/rise"
 readonly VALIDATION_DIR="/etc/rise/validation"
 readonly VALIDATION_CODE_FILE="$VALIDATION_DIR/validation.code"
 readonly SMTP_CONF_FILE="$CONFIG_DIR/smtp.conf"
+readonly ALERT_CONFIG_FILE="$CONFIG_DIR/alert-config.json"
+readonly ALERT_TIMESTAMPS_FILE="$CONFIG_DIR/alert-timestamps.json"
 
 # Validation code expiry time (15 minutes in seconds)
 readonly VALIDATION_EXPIRY=900
@@ -483,6 +485,206 @@ send_test_email() {
         }'
 }
 
+# ==================== Alert Configuration Management ====================
+
+# Initialize alert configuration directory and files
+init_alert_config() {
+    init_config_dir
+    
+    # Initialize alert config file if not exists
+    if [ ! -f "$ALERT_CONFIG_FILE" ]; then
+        jq -n '{
+            enabled: true,
+            sections: {
+                firewall: {enabled: true, frequencyMinutes: 60},
+                docker: {enabled: true, frequencyMinutes: 30},
+                system: {enabled: true, frequencyMinutes: 15},
+                security: {enabled: true, frequencyMinutes: 0},
+                updates: {enabled: true, frequencyMinutes: 240}
+            }
+        }' > "$ALERT_CONFIG_FILE"
+        chmod 600 "$ALERT_CONFIG_FILE"
+    fi
+    
+    # Initialize timestamps file if not exists
+    if [ ! -f "$ALERT_TIMESTAMPS_FILE" ]; then
+        jq -n '{}' > "$ALERT_TIMESTAMPS_FILE"
+        chmod 600 "$ALERT_TIMESTAMPS_FILE"
+    fi
+}
+
+# Feature: --set-alert-config
+set_alert_config() {
+    local json_data=""
+    
+    # Handle base64 encoded input
+    if [ "${1:-}" = "--base64" ] && [ -n "${2:-}" ]; then
+        json_data=$(echo "${2}" | base64 -d)
+    else
+        json_data=$(cat)
+    fi
+    
+    echo "$json_data" | jq -e . >/dev/null 2>&1 || die ERR_INVALID_INPUT "Malformed JSON payload"
+    
+    # Validate required fields
+    local enabled
+    enabled=$(jq -r '.enabled // empty' <<< "$json_data")
+    if [ -z "$enabled" ]; then
+        die ERR_INVALID_INPUT "Missing required field: enabled"
+    fi
+    
+    # Validate sections structure
+    local sections
+    sections=$(jq -e '.sections | type == "object"' <<< "$json_data" 2>/dev/null) || \
+        die ERR_INVALID_INPUT "Invalid sections structure"
+    
+    # Initialize config directory and files
+    init_alert_config
+    
+    # Store the configuration
+    echo "$json_data" | jq . > "$ALERT_CONFIG_FILE"
+    chmod 600 "$ALERT_CONFIG_FILE"
+    
+    log_event "Alert configuration updated"
+    
+    # Return success
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            message: "Alert configuration updated successfully"
+        }'
+}
+
+# Feature: --get-alert-config
+get_alert_config() {
+    # Initialize config directory and files
+    init_alert_config
+    
+    # Return current configuration
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --argjson config "$(cat "$ALERT_CONFIG_FILE")" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            config: $config
+        }'
+}
+
+# Feature: --check-rate-limit
+check_rate_limit() {
+    local section="${1:-}"
+    
+    if [ -z "$section" ]; then
+        die ERR_INVALID_INPUT "Section name required"
+    fi
+    
+    # Initialize config directory and files
+    init_alert_config
+    
+    # Get current timestamp
+    local current_time
+    current_time=$(date +%s)
+    
+    # Get the section configuration
+    local section_config
+    section_config=$(jq -r ".sections.\"$section\" // null" "$ALERT_CONFIG_FILE")
+    
+    if [ "$section_config" = "null" ]; then
+        die ERR_NOT_FOUND "Unknown section: $section"
+    fi
+    
+    # Get frequency minutes for this section
+    local frequency_minutes
+    frequency_minutes=$(jq -r ".sections.\"$section\".frequencyMinutes // 0" "$ALERT_CONFIG_FILE")
+    
+    # Check if rate limiting is disabled (frequency = 0)
+    if [ "$frequency_minutes" = "0" ]; then
+        jq -n \
+            --arg api_version "$API_VERSION" \
+            --argjson current_time "$current_time" \
+            --argjson allowed "true" \
+            --argjson secondsSinceLastAlert 0 \
+            --arg frequencyMinutes "unlimited" \
+            '{
+                status: "success",
+                api_version: $api_version,
+                allowed: $allowed,
+                secondsSinceLastAlert: $secondsSinceLastAlert,
+                frequencyMinutes: $frequencyMinutes
+            }'
+        return 0
+    fi
+    
+    # Get last alert timestamp for this section
+    local last_timestamp
+    last_timestamp=$(jq -r ".\"$section\" // 0" "$ALERT_TIMESTAMPS_FILE")
+    
+    # Calculate seconds since last alert
+    local seconds_since_last=$((current_time - last_timestamp))
+    
+    # Calculate required interval in seconds
+    local required_interval=$((frequency_minutes * 60))
+    
+    # Check if enough time has passed
+    local allowed="false"
+    if [ "$seconds_since_last" -ge "$required_interval" ]; then
+        allowed="true"
+    fi
+    
+    # Return result
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --argjson current_time "$current_time" \
+        --argjson allowed "$allowed" \
+        --argjson secondsSinceLastAlert "$seconds_since_last" \
+        --argjson requiredInterval "$required_interval" \
+        --argjson frequencyMinutes "$frequency_minutes" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            allowed: $allowed,
+            secondsSinceLastAlert: $secondsSinceLastAlert,
+            requiredInterval: $requiredInterval,
+            frequencyMinutes: $frequencyMinutes
+        }'
+}
+
+# Feature: --record-alert-timestamp
+record_alert_timestamp() {
+    local section="${1:-}"
+    
+    if [ -z "$section" ]; then
+        die ERR_INVALID_INPUT "Section name required"
+    fi
+    
+    # Initialize config directory and files
+    init_alert_config
+    
+    # Get current timestamp
+    local current_time
+    current_time=$(date +%s)
+    
+    # Update the timestamp for this section
+    jq --arg section "$section" --argjson timestamp "$current_time" \
+        '.[$section] = $timestamp' "$ALERT_TIMESTAMPS_FILE" > "$TMPFILE"
+    mv "$TMPFILE" "$ALERT_TIMESTAMPS_FILE"
+    chmod 600 "$ALERT_TIMESTAMPS_FILE"
+    
+    log_event "Alert timestamp recorded for section: $section"
+    
+    # Return success
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        '{
+            status: "success",
+            api_version: $api_version,
+            message: "Alert timestamp recorded"
+        }'
+}
+
 # Version flag
 if [ "${1:-}" = "--version" ]; then
     jq -n \
@@ -509,6 +711,18 @@ case "${1:-}" in
     --test)
         send_test_email
         ;;
+    --set-alert-config)
+        set_alert_config "${2:-}"
+        ;;
+    --get-alert-config)
+        get_alert_config
+        ;;
+    --check-rate-limit)
+        check_rate_limit "${2:-}"
+        ;;
+    --record-alert-timestamp)
+        record_alert_timestamp "${2:-}"
+        ;;
     --version)
         jq -n \
             --arg api_version "$API_VERSION" \
@@ -516,6 +730,6 @@ case "${1:-}" in
             '{status: "success", api_version: $api_version, script_version: $script_version}'
         ;;
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--configure|--send-validation <email>|--verify-code <code>|--status|--test|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--configure|--send-validation <email>|--verify-code <code>|--status|--test|--set-alert-config <json>|--get-alert-config|--check-rate-limit <section>|--record-alert-timestamp <section>|--version}"
         ;;
 esac

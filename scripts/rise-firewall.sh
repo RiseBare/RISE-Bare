@@ -3,12 +3,23 @@
 # Version: 2.0.0
 # Description: RISE Firewall Management - atomic rule application with automatic rollback
 #              Fixed: SSH injection vulnerabilities, implemented actual CRUD operations
+#              Added: Rate limiting for firewall operations
 
 set -Eeuo pipefail
 
 # API version (major.minor) - must match client expectation
 readonly API_VERSION="2.0"
 readonly SCRIPT_VERSION="2.0.0"
+
+# Rate limiting configuration
+readonly RATE_LIMIT_APPLY=10        # Max apply calls per hour
+readonly RATE_LIMIT_RULES=30        # Max rule operations (add/edit/delete) per hour
+readonly RATE_LIMIT_WINDOW=3600     # Time window in seconds (1 hour)
+
+# Rate limit tracking directory
+readonly RATE_LIMIT_DIR="/var/lib/rise"
+readonly RATE_LIMIT_APPLY_FILE="$RATE_LIMIT_DIR/apply-rate.log"
+readonly RATE_LIMIT_RULES_FILE="$RATE_LIMIT_DIR/rules-rate.log"
 
 # Locale enforcement (prevent localized command output)
 export LANG=C
@@ -71,6 +82,78 @@ log_event() {
 for cmd in jq nft ss timeout; do
     command -v "$cmd" >/dev/null 2>&1 || die ERR_DEPENDENCY "$cmd not installed" 2
 done
+
+# Initialize rate limiting directory
+init_rate_limit_dir() {
+    if [ ! -d "$RATE_LIMIT_DIR" ]; then
+        mkdir -p "$RATE_LIMIT_DIR"
+        chmod 700 "$RATE_LIMIT_DIR"
+    fi
+}
+
+# Clean old entries from rate limit log (older than RATE_LIMIT_WINDOW)
+clean_old_entries() {
+    local log_file="$1"
+    local current_time=$(date +%s)
+    local cutoff=$((current_time - RATE_LIMIT_WINDOW))
+    
+    if [ -f "$log_file" ]; then
+        # Keep only entries within the time window
+        local temp_file=$(mktemp)
+        while IFS= read -r timestamp; do
+            if [ "$timestamp" -gt "$cutoff" ] 2>/dev/null; then
+                echo "$timestamp" >> "$temp_file"
+            fi
+        done < "$log_file"
+        mv "$temp_file" "$log_file"
+    fi
+}
+
+# Check and record rate limit for an operation
+# Args: $1 = operation type ("apply" or "rules"), $2 = operation name
+check_rate_limit() {
+    local op_type="$1"
+    local op_name="$2"
+    local log_file
+    local max_limit
+    
+    init_rate_limit_dir
+    
+    if [ "$op_type" = "apply" ]; then
+        log_file="$RATE_LIMIT_APPLY_FILE"
+        max_limit="$RATE_LIMIT_APPLY"
+    else
+        log_file="$RATE_LIMIT_RULES_FILE"
+        max_limit="$RATE_LIMIT_RULES"
+    fi
+    
+    # Clean old entries
+    clean_old_entries "$log_file"
+    
+    # Count recent operations
+    local count=0
+    if [ -f "$log_file" ]; then
+        count=$(wc -l < "$log_file")
+    fi
+    
+    # Check if limit exceeded
+    if [ "$count" -ge "$max_limit" ]; then
+        # Calculate wait time based on oldest entry
+        local oldest=$(head -n 1 "$log_file" 2>/dev/null || echo "0")
+        local current_time=$(date +%s)
+        local wait_time=$((RATE_LIMIT_WINDOW - (current_time - oldest)))
+        if [ "$wait_time" -lt 1 ]; then
+            wait_time=1
+        fi
+        
+        echo "{\"status\": \"error\", \"message\": \"Rate limit exceeded. Try again in $wait_time seconds.\"}"
+        return 1
+    fi
+    
+    # Record this operation
+    echo "$(date +%s)" >> "$log_file"
+    return 0
+}
 
 # Version flag
 if [ "${1:-}" = "--version" ]; then
@@ -309,6 +392,11 @@ scan_ports() {
 
 # Feature: --apply with systemd cleanup (V5.9)
 apply_rules() {
+    # Check rate limit before processing
+    if ! check_rate_limit "apply" "apply_rules"; then
+        exit 1
+    fi
+    
     local rules_json=""
     
     # Handle base64 encoded input
@@ -598,6 +686,11 @@ list_rules() {
 
 # Feature: --add-rule with base64 support and actual nftables modification
 add_rule() {
+    # Check rate limit before processing
+    if ! check_rate_limit "rules" "add_rule"; then
+        exit 1
+    fi
+    
     local rule_json=""
     
     # Handle base64 encoded input
@@ -732,6 +825,11 @@ EOF
 
 # Feature: --edit-rule with base64 support and actual nftables modification
 edit_rule() {
+    # Check rate limit before processing
+    if ! check_rate_limit "rules" "edit_rule"; then
+        exit 1
+    fi
+    
     local rules_json=""
     
     # Handle base64 encoded input
@@ -866,6 +964,11 @@ EOF
 
 # Feature: --delete-rule with base64 support and actual nftables modification
 delete_rule() {
+    # Check rate limit before processing
+    if ! check_rate_limit "rules" "delete_rule"; then
+        exit 1
+    fi
+    
     local rule_json=""
     
     # Handle base64 encoded input

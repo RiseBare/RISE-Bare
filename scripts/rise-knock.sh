@@ -1,19 +1,20 @@
 #!/bin/bash
 # Script: rise-knock.sh
-# Version: 1.0.0
+# Version: 2.0.0
 # Description: RISE Knock Knock Port Knocking Management
 #              Uses NFTables for modern Linux firewall (same as rise-firewall.sh)
 
 set -Eeuo pipefail
 
 # API version (major.minor) - must match client expectation
-readonly API_VERSION="1.0"
-readonly SCRIPT_VERSION="1.0.0"
+readonly API_VERSION="2.0"
+readonly SCRIPT_VERSION="2.0.0"
 
 # Knock configuration directories
 readonly KNOCK_DIR="/etc/knock"
 readonly KNOCK_SEQUENCE_FILE="$KNOCK_DIR/sequence"
 readonly KNOCK_CONFIG_DIR="/var/lib/rise"
+readonly KNOCK_STATUS_FILE="$KNOCK_CONFIG_DIR/knock-status.json"
 
 # Locale enforcement (prevent localized command output)
 export LANG=C
@@ -64,6 +65,7 @@ init_directories() {
     mkdir -p "$KNOCK_DIR"
     chmod 700 "$KNOCK_DIR"
     mkdir -p "$KNOCK_CONFIG_DIR"
+    chmod 755 "$KNOCK_CONFIG_DIR"
 }
 
 # Generate random port sequence
@@ -80,30 +82,22 @@ generate_sequence() {
     echo "$sequence"
 }
 
-# Configure NFTables for port knocking
-configure_nftables_ruleset() {
-    local open_sequence="$1"
-    local close_sequence="$2"
+# Get security level based on sequence length
+get_security_level() {
+    local sequence="$1"
+    local count=$(echo "$sequence" | tr -cd ',' | wc -c)
+    count=$((count + 1))
     
-    cat > "$KNOCK_DIR/knockd.conf" << EOF
-[options]
-        UseSyslog
-
-[openSSH]
-        sequence = [$open_sequence]
-        seq_timeout = 10
-        command = /usr/local/bin/rise-knock-open.sh %IP%
-        tcpflags = syn
-
-[closeSSH]
-        sequence = [$close_sequence]
-        seq_timeout = 10
-        command = /usr/local/bin/rise-knock-close.sh %IP%
-        tcpflags = syn
-EOF
+    if [ $count -le 3 ]; then
+        echo "weak"
+    elif [ $count -le 5 ]; then
+        echo "medium"
+    else
+        echo "strong"
+    fi
 }
 
-# Create NFTables scripts
+# Create NFTables scripts for port knocking
 create_scripts() {
     # Open script - adds NFTables rule
     cat > /usr/local/bin/rise-knock-open.sh << 'EOF'
@@ -129,6 +123,42 @@ EOF
     chmod +x /usr/local/bin/rise-knock-*.sh
 }
 
+# Configure NFTables for port knocking
+configure_nftables_ruleset() {
+    local open_sequence="$1"
+    local close_sequence="$2"
+    
+    cat > "$KNOCK_DIR/knockd.conf" << EOF
+[options]
+        UseSyslog
+
+[openSSH]
+        sequence = [$open_sequence]
+        seq_timeout = 10
+        command = /usr/local/bin/rise-knock-open.sh %IP%
+        tcpflags = syn
+
+[closeSSH]
+        sequence = [$close_sequence]
+        seq_timeout = 10
+        command = /usr/local/bin/rise-knock-close.sh %IP%
+        tcpflags = syn
+EOF
+}
+
+# Save current status
+save_status() {
+    local status="$1"
+    local sequence="$2"
+    local level="$3"
+    
+    jq -n \
+        --arg status "$status" \
+        --arg sequence "$sequence" \
+        --arg level "$level" \
+        '{status: $status, sequence: $sequence, security_level: $level}' > "$KNOCK_STATUS_FILE"
+}
+
 # Install knockd service
 install_knockd() {
     echo "Installing knockd package..."
@@ -140,6 +170,7 @@ install_knockd() {
     # Generate sequences
     local open_seq=$(generate_sequence 3)
     local close_seq=$(generate_sequence 3)
+    local level=$(get_security_level "$open_seq")
     
     configure_nftables_ruleset "$open_seq" "$close_seq"
     create_scripts
@@ -155,12 +186,17 @@ install_knockd() {
         --arg close_sequence "$close_seq" \
         '{open_sequence: $open_sequence, close_sequence: $close_sequence}' > "$KNOCK_CONFIG_DIR/knock-info.json"
     
+    # Save status
+    save_status "active" "$open_seq" "$level"
+    
     # Return success with sequence info
     jq -n \
         --arg api_version "$API_VERSION" \
         --arg open_sequence "$open_seq" \
         --arg close_sequence "$close_seq" \
-        '{status: "success", api_version: $api_version, open_sequence: $open_sequence, close_sequence: $close_sequence}'
+        --arg status "active" \
+        --arg security_level "$level" \
+        '{status: "success", api_version: $api_version, open_sequence: $open_sequence, close_sequence: $close_sequence, knock_status: $status, security_level: $security_level}'
 }
 
 # Uninstall knockd
@@ -176,6 +212,7 @@ uninstall_knockd() {
     rm -rf "$KNOCK_DIR"
     rm -f /usr/local/bin/rise-knock-*.sh
     rm -f "$KNOCK_CONFIG_DIR/knock-info.json"
+    rm -f "$KNOCK_STATUS_FILE"
     
     jq -n \
         --arg api_version "$API_VERSION" \
@@ -184,18 +221,27 @@ uninstall_knockd() {
 
 # Generate new sequence
 generate_sequence_cmd() {
+    local num_knocks="${2:-3}"
+    
+    # Validate number of knocks
+    if [[ ! "$num_knocks" =~ ^[3-7]$ ]]; then
+        die ERR_INVALID_ARGUMENTS "Number of knocks must be between 3 and 7"
+    fi
+    
     if [ ! -f "$KNOCK_DIR/knockd.conf" ]; then
         die ERR_NOT_CONFIGURED "Knockd not configured" 3
     fi
     
+    if systemctl is-active knockd >/dev/null 2>&1; then
+        die ERR_ACTIVE "Cannot generate sequence while knockd is active" 5
+    fi
+    
     # Generate sequences
-    local open_seq=$(generate_sequence 3)
-    local close_seq=$(generate_sequence 3)
+    local open_seq=$(generate_sequence "$num_knocks")
+    local close_seq=$(generate_sequence "$num_knocks")
+    local level=$(get_security_level "$open_seq")
     
     configure_nftables_ruleset "$open_seq" "$close_seq"
-    
-    # Restart service
-    systemctl restart knockd
     
     # Store sequence info
     jq -n \
@@ -203,11 +249,139 @@ generate_sequence_cmd() {
         --arg close_sequence "$close_seq" \
         '{open_sequence: $open_sequence, close_sequence: $close_sequence}' > "$KNOCK_CONFIG_DIR/knock-info.json"
     
+    # Save status
+    save_status "inactive" "$open_seq" "$level"
+    
     jq -n \
         --arg api_version "$API_VERSION" \
         --arg open_sequence "$open_seq" \
         --arg close_sequence "$close_seq" \
-        '{status: "success", api_version: $api_version, open_sequence: $open_sequence, close_sequence: $close_sequence}'
+        --arg status "inactive" \
+        --arg security_level "$level" \
+        '{status: "success", api_version: $api_version, open_sequence: $open_sequence, close_sequence: $close_sequence, knock_status: $status, security_level: $security_level}'
+}
+
+# Enable knockd
+enable_knockd() {
+    if [ ! -f "$KNOCK_DIR/knockd.conf" ]; then
+        die ERR_NOT_CONFIGURED "Knockd not configured" 3
+    fi
+    
+    # Restart service
+    systemctl start knockd
+    
+    # Get current sequence info
+    local open_seq=$(jq -r '.open_sequence' "$KNOCK_CONFIG_DIR/knock-info.json")
+    local level=$(get_security_level "$open_seq")
+    
+    # Save status
+    save_status "active" "$open_seq" "$level"
+    
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg status "active" \
+        --arg sequence "$open_seq" \
+        --arg security_level "$level" \
+        '{status: "success", api_version: $api_version, knock_status: $status, sequence: $sequence, security_level: $security_level}'
+}
+
+# Disable knockd
+disable_knockd() {
+    if [ ! -f "$KNOCK_DIR/knockd.conf" ]; then
+        die ERR_NOT_CONFIGURED "Knockd not configured" 3
+    fi
+    
+    # Stop service
+    systemctl stop knockd
+    
+    # Get current sequence info
+    local open_seq=$(jq -r '.open_sequence' "$KNOCK_CONFIG_DIR/knock-info.json")
+    local level=$(get_security_level "$open_seq")
+    
+    # Save status
+    save_status "inactive" "$open_seq" "$level"
+    
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg status "inactive" \
+        --arg sequence "$open_seq" \
+        --arg security_level "$level" \
+        '{status: "success", api_version: $api_version, knock_status: $status, sequence: $sequence, security_level: $security_level}'
+}
+
+# Temporary disable knockd
+temp_disable_knockd() {
+    local minutes="${2:-30}"
+    
+    # Validate minutes
+    if [[ ! "$minutes" =~ ^[1-9][0-9]*$ ]] || [ "$minutes" -gt 1440 ]; then
+        die ERR_INVALID_ARGUMENTS "Minutes must be between 1 and 1440"
+    fi
+    
+    if [ ! -f "$KNOCK_DIR/knockd.conf" ]; then
+        die ERR_NOT_CONFIGURED "Knockd not configured" 3
+    fi
+    
+    # Get current sequence info
+    local open_seq=$(jq -r '.open_sequence' "$KNOCK_CONFIG_DIR/knock-info.json")
+    local level=$(get_security_level "$open_seq")
+    
+    # Stop service temporarily
+    systemctl stop knockd
+    
+    # Schedule re-enable
+    local reenable_time=$(date -d "+$minutes minutes" +"%Y-%m-%d %H:%M:%S")
+    cat > /usr/local/bin/rise-knock-reenable.sh << EOF
+#!/bin/bash
+sleep \$((\"$minutes\" * 60))
+systemctl start knockd
+echo "\$(date): Knock knock re-enabled after \"$minutes\" minutes" >> /var/log/knock.log
+EOF
+    
+    chmod +x /usr/local/bin/rise-knock-reenable.sh
+    nohup /usr/local/bin/rise-knock-reenable.sh >/dev/null 2>&1 &
+    
+    # Save temporary status
+    jq -n \
+        --arg status "temporary_disabled" \
+        --arg sequence "$open_seq" \
+        --arg level "$level" \
+        --arg reenable_time "$reenable_time" \
+        --arg minutes "$minutes" \
+        '{status: $status, sequence: $sequence, security_level: $level, reenable_time: $reenable_time, disabled_minutes: $minutes}' > "$KNOCK_STATUS_FILE"
+    
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg status "temporary_disabled" \
+        --arg sequence "$open_seq" \
+        --arg security_level "$level" \
+        --arg reenable_time "$reenable_time" \
+        --arg minutes "$minutes" \
+        '{status: "success", api_version: $api_version, knock_status: $status, sequence: $sequence, security_level: $security_level, reenable_time: $reenable_time, disabled_minutes: ($minutes | tonumber)}'
+}
+
+# Get security level
+get_security_level_cmd() {
+    if [ ! -f "$KNOCK_CONFIG_DIR/knock-info.json" ]; then
+        die ERR_NOT_CONFIGURED "No knock configuration found" 3
+    fi
+    
+    local open_seq=$(jq -r '.open_sequence' "$KNOCK_CONFIG_DIR/knock-info.json")
+    local level=$(get_security_level "$open_seq")
+    local status=""
+    
+    if [ -f "$KNOCK_STATUS_FILE" ]; then
+        status=$(jq -r '.status' "$KNOCK_STATUS_FILE")
+    else
+        status="unknown"
+    fi
+    
+    jq -n \
+        --arg api_version "$API_VERSION" \
+        --arg sequence "$open_seq" \
+        --arg level "$level" \
+        --arg status "$status" \
+        '{status: "success", api_version: $api_version, sequence: $sequence, security_level: $level, knock_status: $status}'
 }
 
 # Get current sequence
@@ -228,16 +402,39 @@ get_sequence() {
 
 # Get service status
 get_status() {
-    if systemctl is-active knockd >/dev/null 2>&1; then
-        STATUS="active"
+    local status=""
+    local sequence=""
+    local level=""
+    local reenable_time=""
+    
+    if [ -f "$KNOCK_STATUS_FILE" ]; then
+        status=$(jq -r '.status' "$KNOCK_STATUS_FILE")
+        sequence=$(jq -r '.sequence' "$KNOCK_STATUS_FILE")
+        level=$(jq -r '.security_level' "$KNOCK_STATUS_FILE")
+        reenable_time=$(jq -r '.reenable_time // empty' "$KNOCK_STATUS_FILE")
+        disabled_minutes=$(jq -r '.disabled_minutes // empty' "$KNOCK_STATUS_FILE")
     else
-        STATUS="inactive"
+        status="unknown"
+        sequence=""
+        level=""
+    fi
+    
+    local service_status=""
+    if systemctl is-active knockd >/dev/null 2>&1; then
+        service_status="active"
+    else
+        service_status="inactive"
     fi
     
     jq -n \
         --arg api_version "$API_VERSION" \
-        --arg status "$STATUS" \
-        '{status: "success", api_version: $api_version, service_status: $status}'
+        --arg service_status "$service_status" \
+        --arg knock_status "$status" \
+        --arg sequence "$sequence" \
+        --arg security_level "$level" \
+        --arg reenable_time "$reenable_time" \
+        --arg disabled_minutes "$disabled_minutes" \
+        '{status: "success", api_version: $api_version, service_status: $service_status, knock_status: $status, sequence: $sequence, security_level: $level, reenable_time: $reenable_time, disabled_minutes: ($disabled_minutes | tonumber)}'
 }
 
 # Export configuration
@@ -275,6 +472,14 @@ import_config() {
     # Store configuration
     echo "$config_json" > "$KNOCK_CONFIG_DIR/knock-info.json"
     
+    # Update status
+    local level=$(get_security_level "$open_seq")
+    if systemctl is-active knockd >/dev/null 2>&1; then
+        save_status "active" "$open_seq" "$level"
+    else
+        save_status "inactive" "$open_seq" "$level"
+    fi
+    
     jq -n \
         --arg api_version "$API_VERSION" \
         '{status: "success", api_version: $api_version, message: "Configuration imported successfully"}'
@@ -291,7 +496,23 @@ case "${1:-}" in
         ;;
     
     --generate-sequence)
-        generate_sequence_cmd
+        generate_sequence_cmd "$@"
+        ;;
+    
+    --enable)
+        enable_knockd
+        ;;
+    
+    --disable)
+        disable_knockd
+        ;;
+    
+    --temp-disable)
+        temp_disable_knockd "$@"
+        ;;
+    
+    --security-level)
+        get_security_level_cmd
         ;;
     
     --get-sequence)
@@ -318,6 +539,6 @@ case "${1:-}" in
         ;;
     
     *)
-        die ERR_INVALID_ARGUMENTS "Usage: $0 {--install|--uninstall|--generate-sequence|--get-sequence|--status|--export|--import|--version}"
+        die ERR_INVALID_ARGUMENTS "Usage: $0 {--install|--uninstall|--generate-sequence [num]|--enable|--disable|--temp-disable [minutes]|--security-level|--get-sequence|--status|--export|--import|--version}"
         ;;
 esac

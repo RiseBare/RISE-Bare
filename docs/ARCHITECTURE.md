@@ -63,16 +63,20 @@ apt install -y nftables jq openssl curl wget fail2ban git
 
 ### 1.3 `rise-firewall.sh` - Firewall Management with Fail2Ban
 
-**Version**: `1.0.0`
+**Version**: `2.0.0`
 
-**Role**: Manages NFTables and Fail2Ban rules atomically with automatic rollback
+**Role**: Manages NFTables and Fail2Ban rules atomically with automatic rollback and full CRUD operations
 
 **Commands**:
 
 | Command | Description |
 |---------|-------------|
 | `--scan` | Scan open ports |
-| `--apply` | Apply rules (reads JSON from stdin) |
+| `--list-rules` | List all current firewall rules |
+| `--add-rule` | Add a new rule (reads JSON from stdin) |
+| `--edit-rule <rule_id>` | Edit an existing rule (reads JSON from stdin) |
+| `--delete-rule <rule_id>` | Delete a rule by ID |
+| `--apply` | Apply pending changes (creates atomic rule set) |
 | `--confirm` | Confirm rules after 60s timeout |
 | `--rollback` | Revert to previous rules |
 
@@ -81,16 +85,40 @@ apt install -y nftables jq openssl curl wget fail2ban git
 - SSH monitoring by default
 - Logging of blocked attempts
 
-**JSON stdin format**:
+**JSON stdin format (--add-rule / --edit-rule)**:
 ```json
-[
-  {"port": 22, "proto": "tcp", "action": "allow", "cidr": "0.0.0.0/0"},
-  {"port": 80, "proto": "tcp", "action": "allow"},
-  {"port": 443, "proto": "tcp", "action": "allow"}
-]
+{
+  "port": 80,
+  "proto": "tcp",
+  "action": "allow",
+  "cidr": "0.0.0.0/0",
+  "comment": "HTTP traffic"
+}
 ```
 
-**JSON response format**:
+**--list-rules response format**:
+```json
+{
+  "status": "success",
+  "data": [
+    {"id": "1", "port": 22, "proto": "tcp", "action": "allow", "cidr": "0.0.0.0/0", "comment": "SSH"},
+    {"id": "2", "port": 80, "proto": "tcp", "action": "allow", "cidr": "0.0.0.0/0", "comment": "HTTP"}
+  ]
+}
+```
+
+**--scan response format**:
+```json
+{
+  "status": "success",
+  "data": [
+    {"port": 22, "proto": "tcp", "state": "LISTEN"},
+    {"port": 80, "proto": "tcp", "state": "LISTEN"}
+  ]
+}
+```
+
+**JSON response format (--apply)**:
 ```json
 {
   "status": "success",
@@ -452,8 +480,11 @@ Each paid feature must:
 | UI Action | Script | Command |
 |-----------|--------|---------|
 | Scan ports | rise-firewall | --scan |
-| Add rule | rise-firewall | --apply (stdin) |
-| Remove rule | rise-firewall | --apply (without rule) |
+| List rules | rise-firewall | --list-rules |
+| Add rule | rise-firewall | --add-rule (stdin) |
+| Edit rule | rise-firewall | --edit-rule <id> (stdin) |
+| Delete rule | rise-firewall | --delete-rule <id> |
+| Apply rules | rise-firewall | --apply |
 | Confirm rules | rise-firewall | --confirm |
 | Rollback | rise-firewall | --rollback |
 | List containers | rise-docker | --list |

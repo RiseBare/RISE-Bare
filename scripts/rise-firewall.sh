@@ -425,7 +425,7 @@ list_rules() {
 
     # Validate nftables output
     if [ $nft_exit -ne 0 ]; then
-        if [[ "$nft_output" =~ "No such file or directory" ]] || [[ "$nft_output" =~ "does not exist" ]]; then
+        if [[ "$nft_output" =~ "No such file or directory" ]] || [[ "$nft_output" =~ "does not exist" ]] || [[ "$nft_output" =~ "Error:" ]]; then
             nft_output='{}'
         else
             die ERR_OPERATION_FAILED "nftables error: ${nft_output}"
